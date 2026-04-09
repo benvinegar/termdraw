@@ -74,6 +74,7 @@ type ResizeBoxDragState = {
   objectId: string;
   startMouse: Point;
   originalObject: BoxObject;
+  originalObjects: DrawObject[];
   handle: BoxResizeHandle;
   pushedUndo: boolean;
 };
@@ -368,8 +369,12 @@ function getBoxContentBounds(box: BoxObject): Rect {
   };
 }
 
+function isValidRect(rect: Rect): boolean {
+  return rect.left <= rect.right && rect.top <= rect.bottom;
+}
+
 function rectContainsRect(outer: Rect, inner: Rect): boolean {
-  if (outer.left > outer.right || outer.top > outer.bottom) return false;
+  if (!isValidRect(outer)) return false;
   return (
     inner.left >= outer.left &&
     inner.right <= outer.right &&
@@ -1061,6 +1066,7 @@ export class DrawState {
           objectId: handleHit.object.id,
           startMouse: { x, y },
           originalObject: { ...handleHit.object },
+          originalObjects: cloneObjects(this.getObjectTree(handleHit.object.id)),
           handle: handleHit.handle,
           pushedUndo: false,
         };
@@ -1241,8 +1247,13 @@ export class DrawState {
         break;
       }
       case "resize-box":
-        nextObject = this.resizeBoxWithinCanvas(dragState.originalObject, dragState.handle, point);
-        nextObjects = [nextObject];
+        nextObjects = this.resizeObjectTreeWithinCanvas(
+          dragState.originalObjects,
+          dragState.originalObject,
+          dragState.handle,
+          point,
+        );
+        nextObject = nextObjects.find((object) => object.id === dragState.objectId)!;
         break;
       case "line-endpoint":
         nextObject = this.adjustLineEndpointWithinCanvas(
@@ -1257,7 +1268,9 @@ export class DrawState {
     const changed =
       dragState.kind === "move"
         ? !this.objectListsEqual(nextObjects, dragState.originalObjects)
-        : !this.objectsEqual(nextObject, dragState.originalObject);
+        : dragState.kind === "resize-box"
+          ? !this.objectListsEqual(nextObjects, dragState.originalObjects)
+          : !this.objectsEqual(nextObject, dragState.originalObject);
 
     if (!dragState.pushedUndo && changed) {
       this.pushUndo();
@@ -1297,6 +1310,10 @@ export class DrawState {
           ...this.dragState.originalObject,
           z: zById.get(this.dragState.originalObject.id) ?? this.dragState.originalObject.z,
         };
+        this.dragState.originalObjects = this.dragState.originalObjects.map((object) => ({
+          ...object,
+          z: zById.get(object.id) ?? object.z,
+        }));
         break;
       case "line-endpoint":
         this.dragState.originalObject = {
@@ -1698,6 +1715,131 @@ export class DrawState {
       top: rect.top,
       right: rect.right,
       bottom: rect.bottom,
+    };
+  }
+
+  private resizeObjectTreeWithinCanvas(
+    originalObjects: DrawObject[],
+    originalBox: BoxObject,
+    handle: BoxResizeHandle,
+    point: Point,
+  ): DrawObject[] {
+    const resizedBox = this.resizeBoxWithinCanvas(originalBox, handle, point);
+    const originalContentBounds = getBoxContentBounds(originalBox);
+    const nextContentBounds = getBoxContentBounds(resizedBox);
+
+    return originalObjects.map((object) => {
+      if (object.id === originalBox.id) {
+        return resizedBox;
+      }
+
+      return this.transformObjectForResizedParent(object, originalContentBounds, nextContentBounds);
+    });
+  }
+
+  private transformObjectForResizedParent(
+    object: DrawObject,
+    originalContentBounds: Rect,
+    nextContentBounds: Rect,
+  ): DrawObject {
+    if (!isValidRect(originalContentBounds) || !isValidRect(nextContentBounds)) {
+      return object;
+    }
+
+    switch (object.type) {
+      case "line": {
+        const start = this.mapPointBetweenRects(
+          { x: object.x1, y: object.y1 },
+          originalContentBounds,
+          nextContentBounds,
+        );
+        const end = this.mapPointBetweenRects(
+          { x: object.x2, y: object.y2 },
+          originalContentBounds,
+          nextContentBounds,
+        );
+        return {
+          ...object,
+          x1: start.x,
+          y1: start.y,
+          x2: end.x,
+          y2: end.y,
+        };
+      }
+      case "text": {
+        const mapped = this.mapPointBetweenRects(
+          { x: object.x, y: object.y },
+          originalContentBounds,
+          nextContentBounds,
+        );
+        return this.clampTextIntoRect(
+          {
+            ...object,
+            x: mapped.x,
+            y: mapped.y,
+          },
+          nextContentBounds,
+        );
+      }
+      case "box": {
+        const topLeft = this.mapPointBetweenRects(
+          { x: object.left, y: object.top },
+          originalContentBounds,
+          nextContentBounds,
+        );
+        const bottomRight = this.mapPointBetweenRects(
+          { x: object.right, y: object.bottom },
+          originalContentBounds,
+          nextContentBounds,
+        );
+        const rect = normalizeRect(topLeft, bottomRight);
+        return {
+          ...object,
+          left: rect.left,
+          top: rect.top,
+          right: rect.right,
+          bottom: rect.bottom,
+        };
+      }
+    }
+  }
+
+  private mapPointBetweenRects(point: Point, from: Rect, to: Rect): Point {
+    return {
+      x: this.mapAxisBetweenRanges(point.x, from.left, from.right, to.left, to.right),
+      y: this.mapAxisBetweenRanges(point.y, from.top, from.bottom, to.top, to.bottom),
+    };
+  }
+
+  private mapAxisBetweenRanges(
+    value: number,
+    fromStart: number,
+    fromEnd: number,
+    toStart: number,
+    toEnd: number,
+  ): number {
+    if (fromStart === fromEnd) {
+      return toStart;
+    }
+
+    const ratio = (value - fromStart) / (fromEnd - fromStart);
+    const mapped = Math.round(toStart + ratio * (toEnd - toStart));
+    const min = Math.min(toStart, toEnd);
+    const max = Math.max(toStart, toEnd);
+    return clamp(mapped, min, max);
+  }
+
+  private clampTextIntoRect(text: TextObject, rect: Rect): TextObject {
+    if (!isValidRect(rect)) return text;
+
+    const width = visibleCellCount(text.content);
+    const minX = rect.left;
+    const maxX = rect.right - width + 1;
+
+    return {
+      ...text,
+      x: maxX >= minX ? clamp(text.x, minX, maxX) : rect.left,
+      y: clamp(text.y, rect.top, rect.bottom),
     };
   }
 

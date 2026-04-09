@@ -154,6 +154,64 @@ describe("DrawState", () => {
     expect(state.getCompositeCell(11, 2)).toBe("H");
   });
 
+  test("resizing a box also resizes child lines to fit", () => {
+    const state = new DrawState(40, 16);
+    state.setMode("box");
+
+    const boxStart = canvasPoint(state, 0, 0);
+    const boxEnd = canvasPoint(state, 8, 4);
+    state.handlePointerEvent({ type: "down", button: MouseButton.LEFT, ...boxStart });
+    state.handlePointerEvent({ type: "drag", button: MouseButton.LEFT, ...boxEnd });
+    state.handlePointerEvent({ type: "up", button: MouseButton.LEFT, ...boxEnd });
+
+    state.setMode("line");
+    const lineStart = canvasPoint(state, 2, 2);
+    const lineEnd = canvasPoint(state, 6, 2);
+    state.handlePointerEvent({ type: "down", button: MouseButton.LEFT, ...lineStart });
+    state.handlePointerEvent({ type: "drag", button: MouseButton.LEFT, ...lineEnd });
+    state.handlePointerEvent({ type: "up", button: MouseButton.LEFT, ...lineEnd });
+
+    state.setMode("box");
+    const resizeStart = canvasPoint(state, 8, 4);
+    const resizeEnd = canvasPoint(state, 4, 3);
+    state.handlePointerEvent({ type: "down", button: MouseButton.LEFT, ...resizeStart });
+    state.handlePointerEvent({ type: "drag", button: MouseButton.LEFT, ...resizeEnd });
+    state.handlePointerEvent({ type: "up", button: MouseButton.LEFT, ...resizeEnd });
+
+    expect(state.getCompositeCell(1, 2)).toBe("#");
+    expect(state.getCompositeCell(2, 2)).toBe("#");
+    expect(state.getCompositeCell(3, 2)).toBe("#");
+    expect(state.getCompositeCell(4, 2)).toBe("┃");
+  });
+
+  test("resizing a box keeps child text inside it", () => {
+    const state = new DrawState(40, 16);
+    state.setMode("box");
+
+    const boxStart = canvasPoint(state, 0, 0);
+    const boxEnd = canvasPoint(state, 8, 4);
+    state.handlePointerEvent({ type: "down", button: MouseButton.LEFT, ...boxStart });
+    state.handlePointerEvent({ type: "drag", button: MouseButton.LEFT, ...boxEnd });
+    state.handlePointerEvent({ type: "up", button: MouseButton.LEFT, ...boxEnd });
+
+    state.setMode("text");
+    const textStart = canvasPoint(state, 6, 2);
+    state.handlePointerEvent({ type: "down", button: MouseButton.LEFT, ...textStart });
+    state.insertCharacter("H");
+    state.insertCharacter("i");
+
+    state.setMode("box");
+    const resizeStart = canvasPoint(state, 8, 4);
+    const resizeEnd = canvasPoint(state, 4, 3);
+    state.handlePointerEvent({ type: "down", button: MouseButton.LEFT, ...resizeStart });
+    state.handlePointerEvent({ type: "drag", button: MouseButton.LEFT, ...resizeEnd });
+    state.handlePointerEvent({ type: "up", button: MouseButton.LEFT, ...resizeEnd });
+
+    expect(state.getCompositeCell(6, 2)).toBe(" ");
+    expect(state.getCompositeCell(2, 2)).toBe("H");
+    expect(state.getCompositeCell(3, 2)).toBe("i");
+  });
+
   test("selected boxes expose resize handles and can be resized from a corner", () => {
     const state = new DrawState(30, 12);
     state.setMode("box");
