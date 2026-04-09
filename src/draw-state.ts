@@ -2,9 +2,9 @@ import { MouseButton } from "@opentui/core";
 
 export const BRUSHES = ["#", "*", "+", "-", "=", "x", "o", ".", "|", "/", "\\"] as const;
 const MAX_HISTORY = 100;
-const BOX_PREVIEW_ERASE_CHAR = "·";
+const HANDLE_CHARACTER = "●";
 
-export type DrawMode = "box" | "line" | "text";
+export type DrawMode = "select" | "box" | "line" | "text";
 type CanvasGrid = string[][];
 type Point = { x: number; y: number };
 type Rect = { left: number; top: number; right: number; bottom: number };
@@ -13,10 +13,96 @@ type Direction = "n" | "e" | "s" | "w";
 type DirectionCounts = { light: number; heavy: number };
 type CellConnections = Record<Direction, DirectionCounts>;
 type ConnectionGrid = CellConnections[][];
-type BoxRecord = Rect & { style: LineStyle };
-type Snapshot = { canvas: CanvasGrid; connections: ConnectionGrid; boxes: BoxRecord[] };
-type BoxDragStart = { x: number; y: number; erase: boolean };
-type LineDragStart = { x: number; y: number; erase: boolean };
+type BoxResizeHandle = "top-left" | "top-right" | "bottom-left" | "bottom-right";
+type LineEndpointHandle = "start" | "end";
+
+type BaseDrawObject = {
+  id: string;
+  z: number;
+};
+
+type BoxObject = BaseDrawObject & {
+  type: "box";
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+};
+
+type LineObject = BaseDrawObject & {
+  type: "line";
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  brush: string;
+};
+
+type TextObject = BaseDrawObject & {
+  type: "text";
+  x: number;
+  y: number;
+  content: string;
+};
+
+export type DrawObject = BoxObject | LineObject | TextObject;
+
+type Snapshot = {
+  objects: DrawObject[];
+  selectedObjectId: string | null;
+  cursorX: number;
+  cursorY: number;
+  nextObjectNumber: number;
+  nextZIndex: number;
+};
+
+type PendingBox = { start: Point; end: Point };
+type PendingLine = { start: Point; end: Point };
+
+type MoveDragState = {
+  kind: "move";
+  objectId: string;
+  startMouse: Point;
+  originalObject: DrawObject;
+  pushedUndo: boolean;
+};
+
+type ResizeBoxDragState = {
+  kind: "resize-box";
+  objectId: string;
+  startMouse: Point;
+  originalObject: BoxObject;
+  handle: BoxResizeHandle;
+  pushedUndo: boolean;
+};
+
+type LineEndpointDragState = {
+  kind: "line-endpoint";
+  objectId: string;
+  startMouse: Point;
+  originalObject: LineObject;
+  endpoint: LineEndpointHandle;
+  pushedUndo: boolean;
+};
+
+type DragState = MoveDragState | ResizeBoxDragState | LineEndpointDragState;
+
+type EraseState = {
+  erasedIds: Set<string>;
+  pushedUndo: boolean;
+};
+
+type HandleHit =
+  | {
+      kind: "box-corner";
+      object: BoxObject;
+      handle: BoxResizeHandle;
+    }
+  | {
+      kind: "line-endpoint";
+      object: LineObject;
+      endpoint: LineEndpointHandle;
+    };
 
 export type PointerEventLike = {
   type: "down" | "up" | "drag" | "drag-end" | "scroll" | "move" | "drop" | "over" | "out";
@@ -113,10 +199,6 @@ function createCanvas(width: number, height: number): CanvasGrid {
   return Array.from({ length: height }, () => Array.from({ length: width }, () => " "));
 }
 
-function cloneCanvas(canvas: CanvasGrid): CanvasGrid {
-  return canvas.map((row) => row.slice());
-}
-
 function createCellConnections(): CellConnections {
   return {
     n: { light: 0, heavy: 0 },
@@ -128,21 +210,6 @@ function createCellConnections(): CellConnections {
 
 function createConnectionGrid(width: number, height: number): ConnectionGrid {
   return Array.from({ length: height }, () => Array.from({ length: width }, () => createCellConnections()));
-}
-
-function cloneConnectionGrid(grid: ConnectionGrid): ConnectionGrid {
-  return grid.map((row) =>
-    row.map((cell) => ({
-      n: { ...cell.n },
-      e: { ...cell.e },
-      s: { ...cell.s },
-      w: { ...cell.w },
-    })),
-  );
-}
-
-function cloneBoxes(boxes: BoxRecord[]): BoxRecord[] {
-  return boxes.map((box) => ({ ...box }));
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -158,13 +225,195 @@ function normalizeRect(start: Point, end: Point): Rect {
   };
 }
 
+function cloneObject(object: DrawObject): DrawObject {
+  return { ...object };
+}
+
+function cloneObjects(objects: DrawObject[]): DrawObject[] {
+  return objects.map((object) => cloneObject(object));
+}
+
+function adjustConnection(
+  grid: ConnectionGrid,
+  width: number,
+  height: number,
+  x: number,
+  y: number,
+  direction: Direction,
+  style: LineStyle,
+  delta: number,
+): void {
+  if (x < 0 || y < 0 || x >= width || y >= height) return;
+  const offset = DIRECTION_DELTAS[direction];
+  const nx = x + offset.dx;
+  const ny = y + offset.dy;
+  if (nx < 0 || ny < 0 || nx >= width || ny >= height) return;
+
+  const source = grid[y]![x]![direction];
+  source[style] = Math.max(0, source[style] + delta);
+
+  const opposite = OPPOSITE_DIRECTION[direction];
+  const target = grid[ny]![nx]![opposite];
+  target[style] = Math.max(0, target[style] + delta);
+}
+
+function applyBoxPerimeter(rect: Rect, applySegment: (x: number, y: number, direction: Direction) => void): void {
+  if (rect.left === rect.right && rect.top === rect.bottom) return;
+
+  for (let x = rect.left; x < rect.right; x += 1) {
+    applySegment(x, rect.top, "e");
+  }
+  if (rect.bottom !== rect.top) {
+    for (let x = rect.left; x < rect.right; x += 1) {
+      applySegment(x, rect.bottom, "e");
+    }
+  }
+
+  for (let y = rect.top; y < rect.bottom; y += 1) {
+    applySegment(rect.left, y, "s");
+  }
+  if (rect.right !== rect.left) {
+    for (let y = rect.top; y < rect.bottom; y += 1) {
+      applySegment(rect.right, y, "s");
+    }
+  }
+}
+
+function getLinePoints(x0: number, y0: number, x1: number, y1: number): Point[] {
+  const points: Point[] = [];
+
+  let currentX = x0;
+  let currentY = y0;
+  const deltaX = Math.abs(x1 - x0);
+  const deltaY = Math.abs(y1 - y0);
+  const stepX = x0 < x1 ? 1 : -1;
+  const stepY = y0 < y1 ? 1 : -1;
+  let err = deltaX - deltaY;
+
+  while (true) {
+    points.push({ x: currentX, y: currentY });
+    if (currentX === x1 && currentY === y1) break;
+    const twiceErr = err * 2;
+    if (twiceErr > -deltaY) {
+      err -= deltaY;
+      currentX += stepX;
+    }
+    if (twiceErr < deltaX) {
+      err += deltaX;
+      currentY += stepY;
+    }
+  }
+
+  return points;
+}
+
+function getObjectBounds(object: DrawObject): Rect {
+  switch (object.type) {
+    case "box":
+      return { left: object.left, top: object.top, right: object.right, bottom: object.bottom };
+    case "line":
+      return normalizeRect({ x: object.x1, y: object.y1 }, { x: object.x2, y: object.y2 });
+    case "text": {
+      const width = Math.max(1, visibleCellCount(object.content));
+      return {
+        left: object.x,
+        top: object.y,
+        right: object.x + width - 1,
+        bottom: object.y,
+      };
+    }
+  }
+}
+
+function getBoxCornerPoints(box: BoxObject): Record<BoxResizeHandle, Point> {
+  return {
+    "top-left": { x: box.left, y: box.top },
+    "top-right": { x: box.right, y: box.top },
+    "bottom-left": { x: box.left, y: box.bottom },
+    "bottom-right": { x: box.right, y: box.bottom },
+  };
+}
+
+function getLineEndpointPoints(line: LineObject): Record<LineEndpointHandle, Point> {
+  return {
+    start: { x: line.x1, y: line.y1 },
+    end: { x: line.x2, y: line.y2 },
+  };
+}
+
+function getObjectRenderCells(object: DrawObject): Point[] {
+  switch (object.type) {
+    case "box": {
+      const cells = new Map<string, Point>();
+      const add = (x: number, y: number) => {
+        cells.set(`${x},${y}`, { x, y });
+      };
+
+      for (let x = object.left; x <= object.right; x += 1) {
+        add(x, object.top);
+        add(x, object.bottom);
+      }
+      for (let y = object.top; y <= object.bottom; y += 1) {
+        add(object.left, y);
+        add(object.right, y);
+      }
+
+      return [...cells.values()];
+    }
+    case "line":
+      return getLinePoints(object.x1, object.y1, object.x2, object.y2);
+    case "text":
+      return splitGraphemes(object.content).map((_, index) => ({
+        x: object.x + index,
+        y: object.y,
+      }));
+  }
+}
+
+function translateObject(object: DrawObject, dx: number, dy: number): DrawObject {
+  switch (object.type) {
+    case "box":
+      return {
+        ...object,
+        left: object.left + dx,
+        right: object.right + dx,
+        top: object.top + dy,
+        bottom: object.bottom + dy,
+      };
+    case "line":
+      return {
+        ...object,
+        x1: object.x1 + dx,
+        x2: object.x2 + dx,
+        y1: object.y1 + dy,
+        y2: object.y2 + dy,
+      };
+    case "text":
+      return {
+        ...object,
+        x: object.x + dx,
+        y: object.y + dy,
+      };
+  }
+}
+
+function objectContainsPoint(object: DrawObject, x: number, y: number): boolean {
+  switch (object.type) {
+    case "box": {
+      const withinBounds = x >= object.left && x <= object.right && y >= object.top && y <= object.bottom;
+      if (!withinBounds) return false;
+      return x === object.left || x === object.right || y === object.top || y === object.bottom;
+    }
+    case "line":
+      return getLinePoints(object.x1, object.y1, object.x2, object.y2).some((point) => point.x === x && point.y === y);
+    case "text":
+      return y === object.y && x >= object.x && x < object.x + visibleCellCount(object.content);
+  }
+}
+
 export class DrawState {
   public readonly canvasTopRow = 4;
   public readonly canvasLeftCol = 1;
-
-  private canvas: CanvasGrid = [];
-  private connections: ConnectionGrid = [];
-  private boxes: BoxRecord[] = [];
 
   private canvasWidth = 0;
   private canvasHeight = 0;
@@ -176,14 +425,25 @@ export class DrawState {
   private brush = BRUSHES[0] as string;
   private brushIndex = 0;
 
-  private lineStart: LineDragStart | null = null;
-  private linePreviewEnd: Point | null = null;
-  private boxStart: BoxDragStart | null = null;
-  private boxPreviewEnd: Point | null = null;
+  private objects: DrawObject[] = [];
+  private selectedObjectId: string | null = null;
+  private activeTextObjectId: string | null = null;
+
+  private pendingLine: PendingLine | null = null;
+  private pendingBox: PendingBox | null = null;
+  private dragState: DragState | null = null;
+  private eraseState: EraseState | null = null;
+
+  private nextObjectNumber = 1;
+  private nextZIndex = 1;
 
   private undoStack: Snapshot[] = [];
   private redoStack: Snapshot[] = [];
-  private status = "Line mode: drag from one coordinate to another to draw straight lines.";
+  private status = "Line mode: drag on empty space to create a line object, or drag an existing object to move it.";
+
+  private sceneDirty = true;
+  private renderCanvas: CanvasGrid = [];
+  private renderConnections: ConnectionGrid = [];
 
   constructor(viewWidth: number, viewHeight: number) {
     this.ensureCanvasSize(viewWidth, viewHeight);
@@ -217,6 +477,10 @@ export class DrawState {
     return this.canvasHeight;
   }
 
+  public get hasSelectedObject(): boolean {
+    return this.getSelectedObject() !== null;
+  }
+
   public ensureCanvasSize(viewWidth: number, viewHeight: number): void {
     const nextCanvasWidth = Math.max(1, viewWidth - 2);
     const nextCanvasHeight = Math.max(1, viewHeight - 5);
@@ -225,40 +489,17 @@ export class DrawState {
       return;
     }
 
-    const previousCanvas = this.canvas;
-    const previousConnections = this.connections;
-
-    const nextCanvas = createCanvas(nextCanvasWidth, nextCanvasHeight);
-    const nextConnections = createConnectionGrid(nextCanvasWidth, nextCanvasHeight);
-
-    const copyHeight = Math.min(this.canvasHeight, nextCanvasHeight);
-    const copyWidth = Math.min(this.canvasWidth, nextCanvasWidth);
-
-    for (let y = 0; y < copyHeight; y += 1) {
-      for (let x = 0; x < copyWidth; x += 1) {
-        nextCanvas[y]![x] = previousCanvas[y]![x] ?? " ";
-
-        const previousCell = previousConnections[y]?.[x];
-        if (!previousCell) continue;
-
-        for (const direction of DIRECTIONS) {
-          nextConnections[y]![x]![direction].light = previousCell[direction].light;
-          nextConnections[y]![x]![direction].heavy = previousCell[direction].heavy;
-        }
-      }
-    }
-
-    this.canvas = nextCanvas;
-    this.connections = nextConnections;
-    this.boxes = this.boxes.filter((box) => this.isRectInsideCanvas(box, nextCanvasWidth, nextCanvasHeight));
     this.canvasWidth = nextCanvasWidth;
     this.canvasHeight = nextCanvasHeight;
     this.cursorX = Math.max(0, Math.min(this.cursorX, this.canvasWidth - 1));
     this.cursorY = Math.max(0, Math.min(this.cursorY, this.canvasHeight - 1));
-    this.lineStart = null;
-    this.linePreviewEnd = null;
-    this.boxStart = null;
-    this.boxPreviewEnd = null;
+
+    this.objects = this.objects.map((object) => this.shiftObjectInsideCanvas(object));
+    this.pendingLine = null;
+    this.pendingBox = null;
+    this.dragState = null;
+    this.eraseState = null;
+    this.markSceneDirty();
   }
 
   public handlePointerEvent(event: PointerEventLike): void {
@@ -275,93 +516,103 @@ export class DrawState {
     const clampedX = clamp(canvasX, 0, this.canvasWidth - 1);
     const clampedY = clamp(canvasY, 0, this.canvasHeight - 1);
     const insideCanvas = this.isInsideCanvas(canvasX, canvasY);
+    const point = { x: clampedX, y: clampedY };
 
     if (event.type === "up" || event.type === "drag-end") {
-      if (this.mode === "box" && this.boxStart) {
-        const endX = insideCanvas ? canvasX : clampedX;
-        const endY = insideCanvas ? canvasY : clampedY;
-        this.commitBox(this.boxStart.x, this.boxStart.y, endX, endY, this.boxStart.erase);
-        this.cursorX = endX;
-        this.cursorY = endY;
-      }
-
-      if (this.mode === "line" && this.lineStart) {
-        const endX = insideCanvas ? canvasX : clampedX;
-        const endY = insideCanvas ? canvasY : clampedY;
-        this.commitLine(this.lineStart.x, this.lineStart.y, endX, endY, this.lineStart.erase);
-        this.cursorX = endX;
-        this.cursorY = endY;
-      }
-
-      this.lineStart = null;
-      this.linePreviewEnd = null;
-      this.boxStart = null;
-      this.boxPreviewEnd = null;
+      this.finishPointerInteraction(point, insideCanvas);
       return;
     }
 
     if (event.type === "drag") {
-      if (this.mode === "box" && this.boxStart) {
-        this.cursorX = clampedX;
-        this.cursorY = clampedY;
-        this.boxPreviewEnd = { x: clampedX, y: clampedY };
+      this.cursorX = clampedX;
+      this.cursorY = clampedY;
+
+      if (this.dragState) {
+        this.updateDraggedObject(point);
         return;
       }
 
-      if (this.mode === "line" && this.lineStart) {
-        this.cursorX = clampedX;
-        this.cursorY = clampedY;
-        this.linePreviewEnd = { x: clampedX, y: clampedY };
+      if (this.pendingBox) {
+        this.pendingBox.end = point;
+        this.setStatus(`Sizing box ${this.describeRect(normalizeRect(this.pendingBox.start, this.pendingBox.end))}.`);
         return;
       }
+
+      if (this.pendingLine) {
+        this.pendingLine.end = point;
+        this.setStatus(`Sizing line to ${point.x + 1},${point.y + 1}.`);
+        return;
+      }
+
+      if (insideCanvas && this.eraseState) {
+        this.eraseObjectAt(point.x, point.y);
+      }
+      return;
     }
 
-    if (!insideCanvas) return;
+    if (event.type !== "down") {
+      return;
+    }
+
+    if (!insideCanvas) {
+      if (event.button === MouseButton.LEFT && this.mode === "select") {
+        this.selectedObjectId = null;
+        this.activeTextObjectId = null;
+        this.setStatus("Selection cleared.");
+      }
+      return;
+    }
 
     this.cursorX = canvasX;
     this.cursorY = canvasY;
 
-    if (this.mode === "text") {
-      if (event.type === "down" && event.button === MouseButton.RIGHT) {
-        this.pushUndo();
-        this.paintCell(canvasX, canvasY, " ");
-        this.setStatus(`Erased at ${canvasX + 1},${canvasY + 1}.`);
-      }
+    if (event.button === MouseButton.RIGHT) {
+      this.beginEraseSession();
+      this.eraseObjectAt(canvasX, canvasY);
       return;
     }
 
-    if (this.mode === "box") {
-      if (event.type === "down" && (event.button === MouseButton.LEFT || event.button === MouseButton.RIGHT)) {
-        this.pushUndo();
-        const erase = event.button === MouseButton.RIGHT;
-        this.boxStart = { x: canvasX, y: canvasY, erase };
-        this.boxPreviewEnd = { x: canvasX, y: canvasY };
-        this.setStatus(
-          erase
-            ? `Box erase start at ${canvasX + 1},${canvasY + 1}.`
-            : `Box start at ${canvasX + 1},${canvasY + 1}. Drag to size, release to commit.`,
-        );
+    if (this.mode === "select") {
+      if (this.tryBeginSelectModeInteraction(canvasX, canvasY)) {
+        return;
       }
+      this.selectedObjectId = null;
+      this.activeTextObjectId = null;
+      this.setStatus("Selection cleared.");
       return;
     }
 
-    if (this.mode === "line") {
-      if (event.type === "down" && (event.button === MouseButton.LEFT || event.button === MouseButton.RIGHT)) {
-        this.pushUndo();
-        const erase = event.button === MouseButton.RIGHT;
-        this.lineStart = { x: canvasX, y: canvasY, erase };
-        this.linePreviewEnd = { x: canvasX, y: canvasY };
-        this.setStatus(
-          erase
-            ? `Line erase start at ${canvasX + 1},${canvasY + 1}.`
-            : `Line start at ${canvasX + 1},${canvasY + 1}. Drag to endpoint, release to commit.`,
-        );
-      }
+    if (this.tryBeginDirectMoveInteraction(canvasX, canvasY)) {
+      return;
+    }
+
+    switch (this.mode) {
+      case "box":
+        this.activeTextObjectId = null;
+        this.pendingBox = {
+          start: { x: canvasX, y: canvasY },
+          end: { x: canvasX, y: canvasY },
+        };
+        this.setStatus(`Box start at ${canvasX + 1},${canvasY + 1}. Drag to size, release to commit.`);
+        return;
+      case "line":
+        this.activeTextObjectId = null;
+        this.pendingLine = {
+          start: { x: canvasX, y: canvasY },
+          end: { x: canvasX, y: canvasY },
+        };
+        this.setStatus(`Line start at ${canvasX + 1},${canvasY + 1}. Drag to endpoint, release to commit.`);
+        return;
+      case "text":
+        this.placeTextCursor(canvasX, canvasY);
+        return;
     }
   }
 
   public getModeLabel(): string {
     switch (this.mode) {
+      case "select":
+        return "SELECT";
       case "line":
         return "LINE";
       case "box":
@@ -372,13 +623,52 @@ export class DrawState {
   }
 
   public getActivePreviewCharacters(): Map<string, string> {
-    if (this.mode === "line") return this.getLinePreviewCharacters();
-    if (this.mode === "box") return this.getBoxPreviewCharacters();
+    if (this.pendingLine) return this.getLinePreviewCharacters();
+    if (this.pendingBox) return this.getBoxPreviewCharacters();
     return new Map<string, string>();
   }
 
+  public getSelectedCellKeys(): Set<string> {
+    const selected = this.getSelectedObject();
+    const keys = new Set<string>();
+    if (!selected) return keys;
+
+    for (const point of getObjectRenderCells(selected)) {
+      if (!this.isInsideCanvas(point.x, point.y)) continue;
+      keys.add(`${point.x},${point.y}`);
+    }
+
+    return keys;
+  }
+
+  public getSelectionHandleCharacters(): Map<string, string> {
+    const handles = new Map<string, string>();
+    if (this.mode !== "select") return handles;
+
+    const selected = this.getSelectedObject();
+    if (!selected) return handles;
+
+    if (selected.type === "box") {
+      for (const point of Object.values(getBoxCornerPoints(selected))) {
+        if (!this.isInsideCanvas(point.x, point.y)) continue;
+        handles.set(`${point.x},${point.y}`, HANDLE_CHARACTER);
+      }
+      return handles;
+    }
+
+    if (selected.type === "line") {
+      for (const point of Object.values(getLineEndpointPoints(selected))) {
+        if (!this.isInsideCanvas(point.x, point.y)) continue;
+        handles.set(`${point.x},${point.y}`, HANDLE_CHARACTER);
+      }
+    }
+
+    return handles;
+  }
+
   public getCompositeCell(x: number, y: number): string {
-    const ink = this.canvas[y]![x] ?? " ";
+    this.ensureScene();
+    const ink = this.renderCanvas[y]![x] ?? " ";
     if (ink !== " ") return ink;
     return this.getConnectionGlyph(x, y);
   }
@@ -386,7 +676,30 @@ export class DrawState {
   public moveCursor(dx: number, dy: number): void {
     this.cursorX = Math.max(0, Math.min(this.canvasWidth - 1, this.cursorX + dx));
     this.cursorY = Math.max(0, Math.min(this.canvasHeight - 1, this.cursorY + dy));
+    if (this.mode === "text") {
+      this.activeTextObjectId = null;
+    }
     this.setStatus(`Cursor ${this.cursorX + 1},${this.cursorY + 1}.`);
+  }
+
+  public moveSelectedObjectBy(dx: number, dy: number): void {
+    const selected = this.getSelectedObject();
+    if (!selected) {
+      this.setStatus("No object selected.");
+      return;
+    }
+
+    const moved = this.translateObjectWithinCanvas(selected, dx, dy);
+    if (this.objectsEqual(moved, selected)) {
+      this.setStatus(`${this.describeObject(selected)} is already at the edge.`);
+      return;
+    }
+
+    this.pushUndo();
+    this.replaceObject(moved);
+    this.selectedObjectId = moved.id;
+    this.activeTextObjectId = moved.type === "text" ? moved.id : null;
+    this.setStatus(`Moved ${this.describeObject(moved)}.`);
   }
 
   public setBrush(char: string): void {
@@ -403,7 +716,7 @@ export class DrawState {
   }
 
   public cycleMode(): void {
-    const order: DrawMode[] = ["box", "line", "text"];
+    const order: DrawMode[] = ["select", "box", "line", "text"];
     const currentIndex = order.indexOf(this.mode);
     const next = order[(currentIndex + 1) % order.length] ?? "line";
     this.setMode(next);
@@ -412,82 +725,153 @@ export class DrawState {
   public setMode(next: DrawMode): void {
     if (this.mode === next) return;
     this.mode = next;
-    this.lineStart = null;
-    this.linePreviewEnd = null;
-    this.boxStart = null;
-    this.boxPreviewEnd = null;
+    this.pendingLine = null;
+    this.pendingBox = null;
+    this.dragState = null;
+    this.eraseState = null;
+    if (next !== "text") {
+      this.activeTextObjectId = null;
+    }
 
-    if (next === "line") {
-      this.setStatus("Line mode: drag from one coordinate to another to draw straight lines.");
+    if (next === "select") {
+      this.setStatus("Select mode: drag objects to move them, box corners to resize, or line endpoints to adjust.");
+    } else if (next === "line") {
+      this.setStatus("Line mode: drag on empty space to create a line object, or drag an existing object to move it.");
     } else if (next === "box") {
-      this.setStatus("Box mode: left drag draws auto-connected boxes (heavy outer, light inner). Right drag erases box edges.");
+      this.setStatus("Box mode: drag on empty space to create a box object, or drag an existing object to move it.");
     } else {
-      this.setStatus("Text mode: type to place characters, click to move cursor.");
+      this.setStatus("Text mode: click empty space to type, click text to edit, or drag an existing object to move it.");
     }
   }
 
   public stampBrushAtCursor(): void {
     this.pushUndo();
-    this.paintCell(this.cursorX, this.cursorY, this.brush);
+    const object: LineObject = {
+      id: this.createObjectId(),
+      z: this.allocateZIndex(),
+      type: "line",
+      x1: this.cursorX,
+      y1: this.cursorY,
+      x2: this.cursorX,
+      y2: this.cursorY,
+      brush: this.brush,
+    };
+    this.objects.push(object);
+    this.selectedObjectId = object.id;
+    this.activeTextObjectId = null;
+    this.markSceneDirty();
     this.setStatus(`Stamped "${this.brush}" at ${this.cursorX + 1},${this.cursorY + 1}.`);
   }
 
   public eraseAtCursor(): void {
-    this.pushUndo();
-    this.paintCell(this.cursorX, this.cursorY, " ");
-    this.setStatus(`Erased at ${this.cursorX + 1},${this.cursorY + 1}.`);
+    if (this.deleteTopmostObjectAt(this.cursorX, this.cursorY)) return;
+    this.setStatus(`Nothing to erase at ${this.cursorX + 1},${this.cursorY + 1}.`);
   }
 
   public insertCharacter(input: string): void {
     const char = normalizeCellCharacter(input);
     this.pushUndo();
-    this.paintCell(this.cursorX, this.cursorY, char);
 
-    if (this.cursorX < this.canvasWidth - 1) {
-      this.cursorX += 1;
-    } else if (this.cursorY < this.canvasHeight - 1) {
-      this.cursorX = 0;
-      this.cursorY += 1;
+    const activeObject = this.getActiveTextObject();
+    if (activeObject) {
+      const updated: TextObject = {
+        ...activeObject,
+        content: activeObject.content + char,
+      };
+      this.replaceObject(updated);
+      this.selectedObjectId = updated.id;
+      this.activeTextObjectId = updated.id;
+      this.cursorX = Math.min(this.canvasWidth - 1, updated.x + visibleCellCount(updated.content));
+      this.cursorY = updated.y;
+      this.setStatus(`Appended "${char}" to ${this.describeObject(updated)}.`);
+      return;
     }
 
-    this.setStatus(`Inserted "${char}".`);
+    const object: TextObject = {
+      id: this.createObjectId(),
+      z: this.allocateZIndex(),
+      type: "text",
+      x: this.cursorX,
+      y: this.cursorY,
+      content: char,
+    };
+    this.objects.push(object);
+    this.selectedObjectId = object.id;
+    this.activeTextObjectId = object.id;
+    this.cursorX = Math.min(this.canvasWidth - 1, this.cursorX + 1);
+    this.markSceneDirty();
+    this.setStatus(`Created ${this.describeObject(object)}.`);
   }
 
   public backspace(): void {
-    this.pushUndo();
-
-    if (this.cursorX > 0) {
-      this.cursorX -= 1;
-    } else if (this.cursorY > 0) {
-      this.cursorY -= 1;
-      this.cursorX = this.canvasWidth - 1;
+    const activeObject = this.getActiveTextObject();
+    if (!activeObject) {
+      if (this.deleteTopmostObjectAt(this.cursorX, this.cursorY)) return;
+      this.setStatus(`Nothing to backspace at ${this.cursorX + 1},${this.cursorY + 1}.`);
+      return;
     }
 
-    this.paintCell(this.cursorX, this.cursorY, " ");
-    this.setStatus(`Backspaced at ${this.cursorX + 1},${this.cursorY + 1}.`);
+    this.pushUndo();
+    const parts = splitGraphemes(activeObject.content);
+    parts.pop();
+
+    if (parts.length === 0) {
+      this.removeObjectById(activeObject.id);
+      this.selectedObjectId = null;
+      this.activeTextObjectId = null;
+      this.cursorX = activeObject.x;
+      this.cursorY = activeObject.y;
+      this.setStatus(`Removed ${this.describeObject(activeObject)}.`);
+      return;
+    }
+
+    const updated: TextObject = {
+      ...activeObject,
+      content: parts.join(""),
+    };
+    this.replaceObject(updated);
+    this.selectedObjectId = updated.id;
+    this.activeTextObjectId = updated.id;
+    this.cursorX = Math.min(this.canvasWidth - 1, updated.x + visibleCellCount(updated.content));
+    this.cursorY = updated.y;
+    this.setStatus(`Backspaced ${this.describeObject(updated)}.`);
   }
 
   public deleteAtCursor(): void {
+    if (this.deleteSelectedObject()) return;
+    if (this.deleteTopmostObjectAt(this.cursorX, this.cursorY)) return;
+    this.setStatus(`Nothing to delete at ${this.cursorX + 1},${this.cursorY + 1}.`);
+  }
+
+  public deleteSelectedObject(): boolean {
+    const selected = this.getSelectedObject();
+    if (!selected) return false;
+
     this.pushUndo();
-    this.paintCell(this.cursorX, this.cursorY, " ");
-    this.setStatus(`Deleted at ${this.cursorX + 1},${this.cursorY + 1}.`);
+    this.removeObjectById(selected.id);
+    this.selectedObjectId = null;
+    if (this.activeTextObjectId === selected.id) {
+      this.activeTextObjectId = null;
+    }
+    this.setStatus(`Deleted ${this.describeObject(selected)}.`);
+    return true;
   }
 
   public clearCanvas(): void {
-    this.pushUndo();
-
-    for (let y = 0; y < this.canvasHeight; y += 1) {
-      for (let x = 0; x < this.canvasWidth; x += 1) {
-        this.canvas[y]![x] = " ";
-      }
+    if (this.objects.length === 0) {
+      this.setStatus("Canvas already clear.");
+      return;
     }
 
-    this.connections = createConnectionGrid(this.canvasWidth, this.canvasHeight);
-    this.boxes = [];
-    this.lineStart = null;
-    this.linePreviewEnd = null;
-    this.boxStart = null;
-    this.boxPreviewEnd = null;
+    this.pushUndo();
+    this.objects = [];
+    this.selectedObjectId = null;
+    this.activeTextObjectId = null;
+    this.pendingLine = null;
+    this.pendingBox = null;
+    this.dragState = null;
+    this.eraseState = null;
+    this.markSceneDirty();
     this.setStatus("Canvas cleared.");
   }
 
@@ -524,12 +908,14 @@ export class DrawState {
   }
 
   public exportArt(): string {
+    this.ensureScene();
     const lines: string[] = [];
 
     for (let y = 0; y < this.canvasHeight; y += 1) {
       let row = "";
       for (let x = 0; x < this.canvasWidth; x += 1) {
-        row += this.getCompositeCell(x, y);
+        const ink = this.renderCanvas[y]![x] ?? " ";
+        row += ink !== " " ? ink : this.getConnectionGlyph(x, y);
       }
       lines.push(row.replace(/\s+$/g, ""));
     }
@@ -544,47 +930,371 @@ export class DrawState {
     return lines.join("\n");
   }
 
-  private getLinePoints(x0: number, y0: number, x1: number, y1: number): Point[] {
-    const points: Point[] = [];
+  private tryBeginSelectModeInteraction(x: number, y: number): boolean {
+    this.activeTextObjectId = null;
 
-    let currentX = x0;
-    let currentY = y0;
-    const deltaX = Math.abs(x1 - x0);
-    const deltaY = Math.abs(y1 - y0);
-    const stepX = x0 < x1 ? 1 : -1;
-    const stepY = y0 < y1 ? 1 : -1;
-    let err = deltaX - deltaY;
-
-    while (true) {
-      points.push({ x: currentX, y: currentY });
-      if (currentX === x1 && currentY === y1) break;
-      const twiceErr = err * 2;
-      if (twiceErr > -deltaY) {
-        err -= deltaY;
-        currentX += stepX;
+    const handleHit = this.findTopmostHandleAt(x, y);
+    if (handleHit) {
+      this.selectedObjectId = handleHit.object.id;
+      if (handleHit.kind === "box-corner") {
+        this.dragState = {
+          kind: "resize-box",
+          objectId: handleHit.object.id,
+          startMouse: { x, y },
+          originalObject: { ...handleHit.object },
+          handle: handleHit.handle,
+          pushedUndo: false,
+        };
+        this.setStatus(`Selected ${this.describeObject(handleHit.object)}. Drag corner to resize.`);
+        return true;
       }
-      if (twiceErr < deltaX) {
-        err += deltaX;
-        currentY += stepY;
+
+      this.dragState = {
+        kind: "line-endpoint",
+        objectId: handleHit.object.id,
+        startMouse: { x, y },
+        originalObject: { ...handleHit.object },
+        endpoint: handleHit.endpoint,
+        pushedUndo: false,
+      };
+      this.setStatus(`Selected ${this.describeObject(handleHit.object)}. Drag endpoint to adjust it.`);
+      return true;
+    }
+
+    const hit = this.findTopmostObjectAt(x, y);
+    if (!hit) return false;
+
+    this.beginMoveInteraction(hit, x, y, `Selected ${this.describeObject(hit)}. Drag to move it.`);
+    return true;
+  }
+
+  private tryBeginDirectMoveInteraction(x: number, y: number): boolean {
+    const hit = this.findTopmostObjectAt(x, y);
+    if (!hit) return false;
+
+    this.beginMoveInteraction(hit, x, y, `Selected ${this.describeObject(hit)}. Drag to move it without leaving ${this.getModeLabel().toLowerCase()} mode.`);
+    return true;
+  }
+
+  private beginMoveInteraction(object: DrawObject, x: number, y: number, status: string): void {
+    this.selectedObjectId = object.id;
+    this.activeTextObjectId = null;
+    this.dragState = {
+      kind: "move",
+      objectId: object.id,
+      startMouse: { x, y },
+      originalObject: cloneObject(object),
+      pushedUndo: false,
+    };
+    this.setStatus(status);
+  }
+
+  private placeTextCursor(x: number, y: number): void {
+    this.selectedObjectId = null;
+    this.activeTextObjectId = null;
+    this.setStatus(`Text cursor ${x + 1},${y + 1}.`);
+  }
+
+  private beginEraseSession(): void {
+    this.pendingLine = null;
+    this.pendingBox = null;
+    this.dragState = null;
+    this.activeTextObjectId = null;
+    this.eraseState = {
+      erasedIds: new Set<string>(),
+      pushedUndo: false,
+    };
+  }
+
+  private finishPointerInteraction(point: Point, insideCanvas: boolean): void {
+    if (this.pendingBox) {
+      const rect = normalizeRect(this.pendingBox.start, this.pendingBox.end);
+      this.pendingBox = null;
+      if (rect.left === rect.right && rect.top === rect.bottom) {
+        this.setStatus("Ignored zero-size box.");
+        return;
+      }
+
+      this.pushUndo();
+      const object: BoxObject = {
+        id: this.createObjectId(),
+        z: this.allocateZIndex(),
+        type: "box",
+        left: rect.left,
+        top: rect.top,
+        right: rect.right,
+        bottom: rect.bottom,
+      };
+      this.objects.push(object);
+      this.selectedObjectId = object.id;
+      this.markSceneDirty();
+      this.setStatus(`Created ${this.describeObject(object)}.`);
+      return;
+    }
+
+    if (this.pendingLine) {
+      const start = this.pendingLine.start;
+      const end = this.pendingLine.end;
+      this.pendingLine = null;
+
+      this.pushUndo();
+      const object: LineObject = {
+        id: this.createObjectId(),
+        z: this.allocateZIndex(),
+        type: "line",
+        x1: start.x,
+        y1: start.y,
+        x2: end.x,
+        y2: end.y,
+        brush: this.brush,
+      };
+      this.objects.push(object);
+      this.selectedObjectId = object.id;
+      this.markSceneDirty();
+      this.setStatus(`Created ${this.describeObject(object)}.`);
+      return;
+    }
+
+    if (this.dragState) {
+      const dragState = this.dragState;
+      this.dragState = null;
+      const object = this.getObjectById(dragState.objectId);
+
+      if (!dragState.pushedUndo) {
+        if (this.mode === "text" && dragState.kind === "move" && object?.type === "text") {
+          this.selectedObjectId = object.id;
+          this.activeTextObjectId = object.id;
+          this.cursorX = Math.min(this.canvasWidth - 1, object.x + visibleCellCount(object.content));
+          this.cursorY = object.y;
+          this.setStatus(`Editing ${this.describeObject(object)}.`);
+          return;
+        }
+
+        if (object) {
+          this.setStatus(`Selected ${this.describeObject(object)}.`);
+        }
+        return;
+      }
+
+      if (object) {
+        if (dragState.kind === "resize-box") {
+          this.setStatus(`Resized ${this.describeObject(object)}.`);
+        } else if (dragState.kind === "line-endpoint") {
+          this.setStatus(`Adjusted ${this.describeObject(object)}.`);
+        } else {
+          this.setStatus(`Moved ${this.describeObject(object)}.`);
+        }
+      }
+      return;
+    }
+
+    if (this.eraseState) {
+      this.eraseState = null;
+      if (!insideCanvas) {
+        this.setStatus(`Cursor ${point.x + 1},${point.y + 1}.`);
+      }
+    }
+  }
+
+  private updateDraggedObject(point: Point): void {
+    if (!this.dragState) return;
+
+    let nextObject: DrawObject;
+
+    switch (this.dragState.kind) {
+      case "move": {
+        const dx = point.x - this.dragState.startMouse.x;
+        const dy = point.y - this.dragState.startMouse.y;
+        nextObject = this.translateObjectWithinCanvas(this.dragState.originalObject, dx, dy);
+        break;
+      }
+      case "resize-box":
+        nextObject = this.resizeBoxWithinCanvas(this.dragState.originalObject, this.dragState.handle, point);
+        break;
+      case "line-endpoint":
+        nextObject = this.adjustLineEndpointWithinCanvas(this.dragState.originalObject, this.dragState.endpoint, point);
+        break;
+    }
+
+    if (!this.dragState.pushedUndo && !this.objectsEqual(nextObject, this.dragState.originalObject)) {
+      this.pushUndo();
+      this.dragState.pushedUndo = true;
+      nextObject = this.bringObjectToFront(nextObject);
+      this.syncDragStateZ(nextObject.z);
+    }
+
+    this.replaceObject(nextObject);
+    this.selectedObjectId = nextObject.id;
+    this.activeTextObjectId = null;
+
+    if (this.dragState.kind === "resize-box") {
+      this.setStatus(`Resizing ${this.describeObject(nextObject)}.`);
+    } else if (this.dragState.kind === "line-endpoint") {
+      this.setStatus(`Adjusting ${this.describeObject(nextObject)}.`);
+    } else {
+      this.setStatus(`Moving ${this.describeObject(nextObject)}.`);
+    }
+  }
+
+  private syncDragStateZ(z: number): void {
+    if (!this.dragState) return;
+
+    switch (this.dragState.kind) {
+      case "move":
+        this.dragState.originalObject = { ...this.dragState.originalObject, z };
+        break;
+      case "resize-box":
+        this.dragState.originalObject = { ...this.dragState.originalObject, z };
+        break;
+      case "line-endpoint":
+        this.dragState.originalObject = { ...this.dragState.originalObject, z };
+        break;
+    }
+  }
+
+  private eraseObjectAt(x: number, y: number): void {
+    const hit = this.findTopmostObjectAt(x, y);
+    if (!hit || !this.eraseState) return;
+    if (this.eraseState.erasedIds.has(hit.id)) return;
+
+    if (!this.eraseState.pushedUndo) {
+      this.pushUndo();
+      this.eraseState.pushedUndo = true;
+    }
+
+    this.eraseState.erasedIds.add(hit.id);
+    this.removeObjectById(hit.id);
+    if (this.selectedObjectId === hit.id) {
+      this.selectedObjectId = null;
+    }
+    if (this.activeTextObjectId === hit.id) {
+      this.activeTextObjectId = null;
+    }
+    this.setStatus(`Deleted ${this.describeObject(hit)}.`);
+  }
+
+  private deleteTopmostObjectAt(x: number, y: number): boolean {
+    const hit = this.findTopmostObjectAt(x, y);
+    if (!hit) return false;
+
+    this.pushUndo();
+    this.removeObjectById(hit.id);
+    this.selectedObjectId = null;
+    if (this.activeTextObjectId === hit.id) {
+      this.activeTextObjectId = null;
+    }
+    this.setStatus(`Deleted ${this.describeObject(hit)}.`);
+    return true;
+  }
+
+  private createSnapshot(): Snapshot {
+    return {
+      objects: cloneObjects(this.objects),
+      selectedObjectId: this.selectedObjectId,
+      cursorX: this.cursorX,
+      cursorY: this.cursorY,
+      nextObjectNumber: this.nextObjectNumber,
+      nextZIndex: this.nextZIndex,
+    };
+  }
+
+  private pushUndo(): void {
+    this.undoStack.push(this.createSnapshot());
+    if (this.undoStack.length > MAX_HISTORY) {
+      this.undoStack.shift();
+    }
+    this.redoStack = [];
+  }
+
+  private restoreSnapshot(snapshot: Snapshot): void {
+    this.objects = cloneObjects(snapshot.objects).map((object) => this.shiftObjectInsideCanvas(object));
+    this.selectedObjectId = snapshot.selectedObjectId;
+    this.cursorX = Math.max(0, Math.min(snapshot.cursorX, this.canvasWidth - 1));
+    this.cursorY = Math.max(0, Math.min(snapshot.cursorY, this.canvasHeight - 1));
+    this.nextObjectNumber = snapshot.nextObjectNumber;
+    this.nextZIndex = snapshot.nextZIndex;
+    this.activeTextObjectId = null;
+    this.pendingLine = null;
+    this.pendingBox = null;
+    this.dragState = null;
+    this.eraseState = null;
+    this.markSceneDirty();
+  }
+
+  private ensureScene(): void {
+    if (!this.sceneDirty) return;
+
+    this.renderCanvas = createCanvas(this.canvasWidth, this.canvasHeight);
+    this.renderConnections = createConnectionGrid(this.canvasWidth, this.canvasHeight);
+
+    const indexedObjects = this.objects.map((object, index) => ({ object, index }));
+    indexedObjects.sort((a, b) => a.object.z - b.object.z || a.index - b.index);
+
+    for (const { object } of indexedObjects) {
+      switch (object.type) {
+        case "box": {
+          const style = this.getBoxStyle(object, object.id);
+          applyBoxPerimeter(object, (x, y, direction) => {
+            adjustConnection(this.renderConnections, this.canvasWidth, this.canvasHeight, x, y, direction, style, 1);
+          });
+          break;
+        }
+        case "line": {
+          for (const point of getLinePoints(object.x1, object.y1, object.x2, object.y2)) {
+            this.paintRenderCell(point.x, point.y, object.brush);
+          }
+          break;
+        }
+        case "text": {
+          for (const [index, segment] of splitGraphemes(object.content).entries()) {
+            this.paintRenderCell(object.x + index, object.y, segment);
+          }
+          break;
+        }
       }
     }
 
-    return points;
+    this.sceneDirty = false;
+  }
+
+  private paintRenderCell(x: number, y: number, char: string): void {
+    if (!this.isInsideCanvas(x, y)) return;
+    this.renderCanvas[y]![x] = normalizeCellCharacter(char);
+  }
+
+  private getConnectionGlyph(x: number, y: number): string {
+    if (!this.isInsideCanvas(x, y)) return " ";
+
+    let mask = 0;
+    let hasHeavy = false;
+
+    for (const direction of DIRECTIONS) {
+      const counts = this.renderConnections[y]![x]![direction];
+      if (counts.light > 0 || counts.heavy > 0) {
+        mask |= DIRECTION_BITS[direction];
+      }
+      if (counts.heavy > 0) {
+        hasHeavy = true;
+      }
+    }
+
+    if (mask === 0) return " ";
+    const table = hasHeavy ? HEAVY_GLYPHS : LIGHT_GLYPHS;
+    return table[mask] ?? (hasHeavy ? "╋" : "┼");
   }
 
   private getLinePreviewCharacters(): Map<string, string> {
     const preview = new Map<string, string>();
-    if (this.mode !== "line" || !this.lineStart || !this.linePreviewEnd) return preview;
+    if (!this.pendingLine) return preview;
 
-    const char = this.lineStart.erase ? BOX_PREVIEW_ERASE_CHAR : this.brush;
-    for (const point of this.getLinePoints(
-      this.lineStart.x,
-      this.lineStart.y,
-      this.linePreviewEnd.x,
-      this.linePreviewEnd.y,
+    for (const point of getLinePoints(
+      this.pendingLine.start.x,
+      this.pendingLine.start.y,
+      this.pendingLine.end.x,
+      this.pendingLine.end.y,
     )) {
       if (!this.isInsideCanvas(point.x, point.y)) continue;
-      preview.set(`${point.x},${point.y}`, char);
+      preview.set(`${point.x},${point.y}`, this.brush);
     }
 
     return preview;
@@ -592,10 +1302,10 @@ export class DrawState {
 
   private getBoxPreviewCharacters(): Map<string, string> {
     const preview = new Map<string, string>();
-    if (this.mode !== "box" || !this.boxStart || !this.boxPreviewEnd) return preview;
+    if (!this.pendingBox) return preview;
 
-    const rect = normalizeRect(this.boxStart, this.boxPreviewEnd);
-    const style = this.boxStart.erase ? "light" : this.inferBoxStyle(rect);
+    const rect = normalizeRect(this.pendingBox.start, this.pendingBox.end);
+    const style = this.getBoxStyle(rect);
 
     const horizontal = style === "heavy" ? "━" : "─";
     const vertical = style === "heavy" ? "┃" : "│";
@@ -623,204 +1333,245 @@ export class DrawState {
     setPreview(rect.left, rect.bottom, bottomLeft);
     setPreview(rect.right, rect.bottom, bottomRight);
 
-    if (this.boxStart.erase) {
-      for (const key of preview.keys()) {
-        preview.set(key, BOX_PREVIEW_ERASE_CHAR);
-      }
-    }
-
     return preview;
   }
 
-  private getConnectionGlyph(x: number, y: number): string {
-    if (!this.isInsideCanvas(x, y)) return " ";
+  private getBoxStyle(rect: Rect, ignoreId?: string): LineStyle {
+    const depth = this.objects.filter((object) => {
+      if (object.type !== "box") return false;
+      if (object.id === ignoreId) return false;
+      return rect.left > object.left && rect.right < object.right && rect.top > object.top && rect.bottom < object.bottom;
+    }).length;
 
-    let mask = 0;
-    let hasHeavy = false;
-
-    for (const direction of DIRECTIONS) {
-      const counts = this.connections[y]![x]![direction];
-      if (counts.light > 0 || counts.heavy > 0) {
-        mask |= DIRECTION_BITS[direction];
-      }
-      if (counts.heavy > 0) {
-        hasHeavy = true;
-      }
-    }
-
-    if (mask === 0) return " ";
-    const table = hasHeavy ? HEAVY_GLYPHS : LIGHT_GLYPHS;
-    return table[mask] ?? (hasHeavy ? "╋" : "┼");
-  }
-
-  private commitLine(startX: number, startY: number, endX: number, endY: number, erase: boolean): void {
-    const char = erase ? " " : this.brush;
-    for (const point of this.getLinePoints(startX, startY, endX, endY)) {
-      this.paintCell(point.x, point.y, char);
-    }
-
-    this.setStatus(
-      erase
-        ? `Erased line to ${endX + 1},${endY + 1}.`
-        : `Drew line to ${endX + 1},${endY + 1} with "${this.brush}".`,
-    );
-  }
-
-  private commitBox(startX: number, startY: number, endX: number, endY: number, erase: boolean): void {
-    const rect = normalizeRect({ x: startX, y: startY }, { x: endX, y: endY });
-
-    if (erase) {
-      this.applyBoxPerimeter(rect, (x, y, direction) => this.removeConnectionAny(x, y, direction));
-
-      const matchIndex = this.findLastMatchingBox(rect);
-      if (matchIndex >= 0) {
-        this.boxes.splice(matchIndex, 1);
-      }
-
-      this.setStatus(`Erased box edges ${this.describeRect(rect)}.`);
-      return;
-    }
-
-    const style = this.inferBoxStyle(rect);
-    this.applyBoxPerimeter(rect, (x, y, direction) => this.adjustConnection(x, y, direction, style, 1));
-    this.boxes.push({ ...rect, style });
-    this.setStatus(`Drew ${style} box ${this.describeRect(rect)}.`);
-  }
-
-  private inferBoxStyle(rect: Rect): LineStyle {
-    const depth = this.boxes.filter(
-      (box) => rect.left > box.left && rect.right < box.right && rect.top > box.top && rect.bottom < box.bottom,
-    ).length;
     return depth % 2 === 0 ? "heavy" : "light";
   }
 
-  private findLastMatchingBox(rect: Rect): number {
-    for (let i = this.boxes.length - 1; i >= 0; i -= 1) {
-      const box = this.boxes[i]!;
-      if (box.left === rect.left && box.top === rect.top && box.right === rect.right && box.bottom === rect.bottom) {
-        return i;
+  private getObjectById(id: string): DrawObject | null {
+    return this.objects.find((object) => object.id === id) ?? null;
+  }
+
+  private getSelectedObject(): DrawObject | null {
+    if (!this.selectedObjectId) return null;
+    return this.getObjectById(this.selectedObjectId);
+  }
+
+  private getActiveTextObject(): TextObject | null {
+    if (!this.activeTextObjectId) return null;
+    const object = this.getObjectById(this.activeTextObjectId);
+    return object?.type === "text" ? object : null;
+  }
+
+  private replaceObject(nextObject: DrawObject): void {
+    const index = this.objects.findIndex((object) => object.id === nextObject.id);
+    if (index < 0) return;
+    this.objects[index] = nextObject;
+    this.markSceneDirty();
+  }
+
+  private removeObjectById(id: string): void {
+    this.objects = this.objects.filter((object) => object.id !== id);
+    this.markSceneDirty();
+  }
+
+  private findTopmostHandleAt(x: number, y: number): HandleHit | null {
+    const indexedObjects = this.objects.map((object, index) => ({ object, index }));
+    indexedObjects.sort((a, b) => b.object.z - a.object.z || b.index - a.index);
+
+    for (const { object } of indexedObjects) {
+      if (object.type === "box") {
+        for (const [handle, point] of Object.entries(getBoxCornerPoints(object)) as [BoxResizeHandle, Point][]) {
+          if (point.x === x && point.y === y) {
+            return { kind: "box-corner", object, handle };
+          }
+        }
+      }
+
+      if (object.type === "line") {
+        for (const [endpoint, point] of Object.entries(getLineEndpointPoints(object)) as [LineEndpointHandle, Point][]) {
+          if (point.x === x && point.y === y) {
+            return { kind: "line-endpoint", object, endpoint };
+          }
+        }
       }
     }
-    return -1;
+
+    return null;
+  }
+
+  private findTopmostObjectAt(x: number, y: number): DrawObject | null {
+    const indexedObjects = this.objects.map((object, index) => ({ object, index }));
+    indexedObjects.sort((a, b) => b.object.z - a.object.z || b.index - a.index);
+
+    for (const { object } of indexedObjects) {
+      if (objectContainsPoint(object, x, y)) {
+        return object;
+      }
+    }
+
+    return null;
+  }
+
+  private translateObjectWithinCanvas(object: DrawObject, desiredDx: number, desiredDy: number): DrawObject {
+    const bounds = getObjectBounds(object);
+
+    const minDx = -bounds.left;
+    const maxDx = this.canvasWidth - 1 - bounds.right;
+    const minDy = -bounds.top;
+    const maxDy = this.canvasHeight - 1 - bounds.bottom;
+
+    const dx = minDx <= maxDx ? clamp(desiredDx, minDx, maxDx) : desiredDx;
+    const dy = minDy <= maxDy ? clamp(desiredDy, minDy, maxDy) : desiredDy;
+
+    return translateObject(object, dx, dy);
+  }
+
+  private resizeBoxWithinCanvas(box: BoxObject, handle: BoxResizeHandle, point: Point): BoxObject {
+    const anchor = this.getOppositeBoxCorner(box, handle);
+    const clampedPoint = this.clampPointInsideCanvas(point);
+    const safePoint = this.ensureBoxDoesNotCollapse(anchor, clampedPoint);
+    const rect = normalizeRect(anchor, safePoint);
+
+    return {
+      ...box,
+      left: rect.left,
+      top: rect.top,
+      right: rect.right,
+      bottom: rect.bottom,
+    };
+  }
+
+  private adjustLineEndpointWithinCanvas(line: LineObject, endpoint: LineEndpointHandle, point: Point): LineObject {
+    const clampedPoint = this.clampPointInsideCanvas(point);
+
+    if (endpoint === "start") {
+      return {
+        ...line,
+        x1: clampedPoint.x,
+        y1: clampedPoint.y,
+      };
+    }
+
+    return {
+      ...line,
+      x2: clampedPoint.x,
+      y2: clampedPoint.y,
+    };
+  }
+
+  private getOppositeBoxCorner(box: BoxObject, handle: BoxResizeHandle): Point {
+    switch (handle) {
+      case "top-left":
+        return { x: box.right, y: box.bottom };
+      case "top-right":
+        return { x: box.left, y: box.bottom };
+      case "bottom-left":
+        return { x: box.right, y: box.top };
+      case "bottom-right":
+        return { x: box.left, y: box.top };
+    }
+  }
+
+  private clampPointInsideCanvas(point: Point): Point {
+    return {
+      x: clamp(point.x, 0, this.canvasWidth - 1),
+      y: clamp(point.y, 0, this.canvasHeight - 1),
+    };
+  }
+
+  private ensureBoxDoesNotCollapse(anchor: Point, point: Point): Point {
+    if (anchor.x !== point.x || anchor.y !== point.y) {
+      return point;
+    }
+
+    if (point.x > 0) {
+      return { x: point.x - 1, y: point.y };
+    }
+    if (point.x < this.canvasWidth - 1) {
+      return { x: point.x + 1, y: point.y };
+    }
+    if (point.y > 0) {
+      return { x: point.x, y: point.y - 1 };
+    }
+    if (point.y < this.canvasHeight - 1) {
+      return { x: point.x, y: point.y + 1 };
+    }
+
+    return point;
+  }
+
+  private shiftObjectInsideCanvas(object: DrawObject): DrawObject {
+    const bounds = getObjectBounds(object);
+    let dx = 0;
+    let dy = 0;
+
+    if (bounds.left < 0) {
+      dx = -bounds.left;
+    } else if (bounds.right >= this.canvasWidth) {
+      dx = this.canvasWidth - 1 - bounds.right;
+    }
+
+    if (bounds.top < 0) {
+      dy = -bounds.top;
+    } else if (bounds.bottom >= this.canvasHeight) {
+      dy = this.canvasHeight - 1 - bounds.bottom;
+    }
+
+    return translateObject(object, dx, dy);
+  }
+
+  private bringObjectToFront<T extends DrawObject>(object: T): T {
+    return {
+      ...object,
+      z: this.allocateZIndex(),
+    } as T;
+  }
+
+  private createObjectId(): string {
+    const id = `obj-${this.nextObjectNumber}`;
+    this.nextObjectNumber += 1;
+    return id;
+  }
+
+  private allocateZIndex(): number {
+    const z = this.nextZIndex;
+    this.nextZIndex += 1;
+    return z;
   }
 
   private describeRect(rect: Rect): string {
     return `${rect.left + 1},${rect.top + 1} → ${rect.right + 1},${rect.bottom + 1}`;
   }
 
-  private applyBoxPerimeter(rect: Rect, applySegment: (x: number, y: number, direction: Direction) => void): void {
-    if (rect.left === rect.right && rect.top === rect.bottom) return;
-
-    for (let x = rect.left; x < rect.right; x += 1) {
-      applySegment(x, rect.top, "e");
-    }
-    if (rect.bottom !== rect.top) {
-      for (let x = rect.left; x < rect.right; x += 1) {
-        applySegment(x, rect.bottom, "e");
-      }
-    }
-
-    for (let y = rect.top; y < rect.bottom; y += 1) {
-      applySegment(rect.left, y, "s");
-    }
-    if (rect.right !== rect.left) {
-      for (let y = rect.top; y < rect.bottom; y += 1) {
-        applySegment(rect.right, y, "s");
-      }
+  private describeObject(object: DrawObject): string {
+    switch (object.type) {
+      case "box":
+        return `box ${this.describeRect(object)}`;
+      case "line":
+        return `line ${object.x1 + 1},${object.y1 + 1} → ${object.x2 + 1},${object.y2 + 1}`;
+      case "text":
+        return `text "${object.content}" at ${object.x + 1},${object.y + 1}`;
     }
   }
 
-  private adjustConnection(x: number, y: number, direction: Direction, style: LineStyle, delta: number): void {
-    if (!this.isInsideCanvas(x, y)) return;
-    const offset = DIRECTION_DELTAS[direction];
-    const nx = x + offset.dx;
-    const ny = y + offset.dy;
-    if (!this.isInsideCanvas(nx, ny)) return;
+  private objectsEqual(a: DrawObject, b: DrawObject): boolean {
+    if (a.type !== b.type) return false;
 
-    const source = this.connections[y]![x]![direction];
-    source[style] = Math.max(0, source[style] + delta);
-
-    const opposite = OPPOSITE_DIRECTION[direction];
-    const target = this.connections[ny]![nx]![opposite];
-    target[style] = Math.max(0, target[style] + delta);
-  }
-
-  private removeConnectionAny(x: number, y: number, direction: Direction): void {
-    if (!this.isInsideCanvas(x, y)) return;
-    const offset = DIRECTION_DELTAS[direction];
-    const nx = x + offset.dx;
-    const ny = y + offset.dy;
-    if (!this.isInsideCanvas(nx, ny)) return;
-
-    const source = this.connections[y]![x]![direction];
-    const style: LineStyle | null = source.heavy > 0 ? "heavy" : source.light > 0 ? "light" : null;
-    if (!style) return;
-    this.adjustConnection(x, y, direction, style, -1);
+    switch (a.type) {
+      case "box":
+        return a.left === (b as BoxObject).left && a.right === (b as BoxObject).right && a.top === (b as BoxObject).top && a.bottom === (b as BoxObject).bottom;
+      case "line":
+        return a.x1 === (b as LineObject).x1 && a.y1 === (b as LineObject).y1 && a.x2 === (b as LineObject).x2 && a.y2 === (b as LineObject).y2 && a.brush === (b as LineObject).brush;
+      case "text":
+        return a.x === (b as TextObject).x && a.y === (b as TextObject).y && a.content === (b as TextObject).content;
+    }
   }
 
   private isInsideCanvas(x: number, y: number): boolean {
     return x >= 0 && y >= 0 && x < this.canvasWidth && y < this.canvasHeight;
   }
 
-  private isRectInsideCanvas(rect: Rect, width = this.canvasWidth, height = this.canvasHeight): boolean {
-    return rect.left >= 0 && rect.top >= 0 && rect.right < width && rect.bottom < height;
-  }
-
-  private paintCell(x: number, y: number, char: string): void {
-    if (!this.isInsideCanvas(x, y)) return;
-    this.canvas[y]![x] = normalizeCellCharacter(char);
-  }
-
-  private createSnapshot(): Snapshot {
-    return {
-      canvas: cloneCanvas(this.canvas),
-      connections: cloneConnectionGrid(this.connections),
-      boxes: cloneBoxes(this.boxes),
-    };
-  }
-
-  private pushUndo(): void {
-    this.undoStack.push(this.createSnapshot());
-    if (this.undoStack.length > MAX_HISTORY) {
-      this.undoStack.shift();
-    }
-    this.redoStack = [];
-  }
-
-  private restoreSnapshot(snapshot: Snapshot): void {
-    const restoredCanvas = createCanvas(this.canvasWidth, this.canvasHeight);
-    const restoredConnections = createConnectionGrid(this.canvasWidth, this.canvasHeight);
-
-    const canvasCopyHeight = Math.min(this.canvasHeight, snapshot.canvas.length);
-    const canvasCopyWidth = Math.min(this.canvasWidth, snapshot.canvas[0]?.length ?? 0);
-    for (let y = 0; y < canvasCopyHeight; y += 1) {
-      for (let x = 0; x < canvasCopyWidth; x += 1) {
-        restoredCanvas[y]![x] = snapshot.canvas[y]![x] ?? " ";
-      }
-    }
-
-    const connectionCopyHeight = Math.min(this.canvasHeight, snapshot.connections.length);
-    const connectionCopyWidth = Math.min(this.canvasWidth, snapshot.connections[0]?.length ?? 0);
-    for (let y = 0; y < connectionCopyHeight; y += 1) {
-      for (let x = 0; x < connectionCopyWidth; x += 1) {
-        const sourceCell = snapshot.connections[y]![x]!;
-        const targetCell = restoredConnections[y]![x]!;
-        for (const direction of DIRECTIONS) {
-          targetCell[direction].light = sourceCell[direction].light;
-          targetCell[direction].heavy = sourceCell[direction].heavy;
-        }
-      }
-    }
-
-    this.canvas = restoredCanvas;
-    this.connections = restoredConnections;
-    this.boxes = cloneBoxes(snapshot.boxes).filter((box) => this.isRectInsideCanvas(box));
-    this.cursorX = Math.max(0, Math.min(this.cursorX, this.canvasWidth - 1));
-    this.cursorY = Math.max(0, Math.min(this.cursorY, this.canvasHeight - 1));
-    this.lineStart = null;
-    this.linePreviewEnd = null;
-    this.boxStart = null;
-    this.boxPreviewEnd = null;
+  private markSceneDirty(): void {
+    this.sceneDirty = true;
   }
 
   private setStatus(message: string): void {

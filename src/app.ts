@@ -23,6 +23,10 @@ const COLORS = {
   warning: RGBA.fromHex("#f59e0b"),
   success: RGBA.fromHex("#22c55e"),
   preview: RGBA.fromHex("#64748b"),
+  selectionFg: RGBA.fromHex("#f8fafc"),
+  selectionBg: RGBA.fromHex("#0ea5e9"),
+  handleFg: RGBA.fromHex("#f59e0b"),
+  handleBg: RGBA.fromHex("#0f172a"),
   cursorFg: RGBA.fromHex("#0f172a"),
   cursorBg: RGBA.fromHex("#f8fafc"),
 };
@@ -161,30 +165,53 @@ export class OpenTuiDrawApp extends FrameBufferRenderable {
       return;
     }
 
+    if (this.state.currentMode === "select" && (name === "backspace" || name === "delete")) {
+      key.preventDefault();
+      this.state.deleteSelectedObject();
+      this.requestRender();
+      return;
+    }
+
     if (name === "up") {
       key.preventDefault();
-      this.state.moveCursor(0, -1);
+      if (this.state.currentMode === "select" && this.state.hasSelectedObject) {
+        this.state.moveSelectedObjectBy(0, -1);
+      } else {
+        this.state.moveCursor(0, -1);
+      }
       this.requestRender();
       return;
     }
 
     if (name === "down") {
       key.preventDefault();
-      this.state.moveCursor(0, 1);
+      if (this.state.currentMode === "select" && this.state.hasSelectedObject) {
+        this.state.moveSelectedObjectBy(0, 1);
+      } else {
+        this.state.moveCursor(0, 1);
+      }
       this.requestRender();
       return;
     }
 
     if (name === "left") {
       key.preventDefault();
-      this.state.moveCursor(-1, 0);
+      if (this.state.currentMode === "select" && this.state.hasSelectedObject) {
+        this.state.moveSelectedObjectBy(-1, 0);
+      } else {
+        this.state.moveCursor(-1, 0);
+      }
       this.requestRender();
       return;
     }
 
     if (name === "right") {
       key.preventDefault();
-      this.state.moveCursor(1, 0);
+      if (this.state.currentMode === "select" && this.state.hasSelectedObject) {
+        this.state.moveSelectedObjectBy(1, 0);
+      } else {
+        this.state.moveCursor(1, 0);
+      }
       this.requestRender();
       return;
     }
@@ -292,7 +319,9 @@ export class OpenTuiDrawApp extends FrameBufferRenderable {
         ? COLORS.accent
         : this.state.currentMode === "box"
           ? COLORS.warning
-          : COLORS.success;
+          : this.state.currentMode === "text"
+            ? COLORS.success
+            : COLORS.selectionBg;
     x = drawSegment(this.frameBuffer, x, y, modeLabel, modeColor, COLORS.panel, TextAttributes.BOLD);
     x = drawSegment(this.frameBuffer, x, y, "  brush:", COLORS.dim, COLORS.panel);
     drawSegment(this.frameBuffer, x, y, `"${this.state.currentBrush}"`, COLORS.accent, COLORS.panel);
@@ -301,7 +330,7 @@ export class OpenTuiDrawApp extends FrameBufferRenderable {
   private drawStatusRow(y: number, innerWidth: number): void {
     this.drawSideBorders(y);
     const text =
-      "Enter save • Esc cancel • Ctrl+T mode • Ctrl+Z undo • Ctrl+Y redo • Ctrl+X clear • [ ] brush • Right-drag erase";
+      "Enter save • Esc cancel • select: move/resize/adjust • draw modes: drag existing objects to move • Delete removes selection • [ ] brush • right-drag delete";
     const combined = `${text}  ${this.state.currentStatus}`;
     const padded = padToWidth(combined, innerWidth);
     this.frameBuffer.drawText(padded, 1, y, COLORS.dim, COLORS.panel);
@@ -309,6 +338,8 @@ export class OpenTuiDrawApp extends FrameBufferRenderable {
 
   private drawCanvas(): void {
     const preview = this.state.getActivePreviewCharacters();
+    const selectedCells = this.state.getSelectedCellKeys();
+    const handleChars = this.state.getSelectionHandleCharacters();
 
     for (let y = 0; y < this.state.height; y += 1) {
       const rowY = this.state.canvasTopRow + y;
@@ -316,12 +347,23 @@ export class OpenTuiDrawApp extends FrameBufferRenderable {
 
       for (let x = 0; x < this.state.width; x += 1) {
         const key = `${x},${y}`;
+        const handleChar = handleChars.get(key);
         const previewChar = preview.get(key);
-        const cell = previewChar ?? this.state.getCompositeCell(x, y);
+        const cell = handleChar ?? previewChar ?? this.state.getCompositeCell(x, y);
         const isCursor = x === this.state.currentCursorX && y === this.state.currentCursorY;
-        const fg = isCursor ? COLORS.cursorFg : previewChar ? COLORS.preview : COLORS.text;
-        const bg = isCursor ? COLORS.cursorBg : COLORS.panel;
-        const attributes = isCursor ? TextAttributes.BOLD : TextAttributes.NONE;
+        const isSelected = selectedCells.has(key);
+        const isHandle = handleChar !== undefined;
+        const fg = isCursor
+          ? COLORS.cursorFg
+          : isHandle
+            ? COLORS.handleFg
+            : isSelected
+              ? COLORS.selectionFg
+              : previewChar
+                ? COLORS.preview
+                : COLORS.text;
+        const bg = isCursor ? COLORS.cursorBg : isHandle ? COLORS.handleBg : isSelected ? COLORS.selectionBg : COLORS.panel;
+        const attributes = isCursor || isSelected || isHandle ? TextAttributes.BOLD : TextAttributes.NONE;
         this.frameBuffer.setCell(x + 1, rowY, cell, fg, bg, attributes);
       }
     }
@@ -351,7 +393,10 @@ export function buildHelpText(binaryName = "tui-draw"): string {
   return truncateToCells(
     `${binaryName} [--output file] [--fenced|--plain]\n\n` +
       `Controls:\n` +
-      `  Ctrl+T / Tab   cycle box / line / text\n` +
+      `  Ctrl+T / Tab   cycle select / box / line / text\n` +
+      `  select mode    move objects, resize box corners, drag line endpoints\n` +
+      `  draw modes     drag existing objects to move them\n` +
+      `  Delete         remove selected object\n` +
       `  Ctrl+Z / Ctrl+Y undo / redo\n` +
       `  Ctrl+X         clear canvas\n` +
       `  [ / ]          cycle brush in line mode\n` +
