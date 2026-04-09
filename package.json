@@ -3,9 +3,12 @@
   "private": true,
   "type": "module",
   "module": "index.ts",
+  "exports": {
+    ".": "./index.ts"
+  },
   "scripts": {
-    "start": "bun run index.ts",
-    "dev": "bun --watch run index.ts",
+    "start": "bun run src/cli.tsx",
+    "dev": "bun --watch run src/cli.tsx",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
     "format": "oxfmt .",
@@ -15,10 +18,13 @@
     "prepare": "simple-git-hooks"
   },
   "dependencies": {
-    "@opentui/core": "^0.1.97"
+    "@opentui/core": "^0.1.97",
+    "@opentui/react": "^0.1.97",
+    "react": "^19.2.5"
   },
   "devDependencies": {
     "@types/bun": "latest",
+    "@types/react": "^19.2.14",
     "lint-staged": "^16.4.0",
     "oxfmt": "^0.44.0",
     "oxlint": "^1.59.0",

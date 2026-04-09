@@ -1,13 +1,13 @@
 import {
-  CliRenderEvents,
   FrameBufferRenderable,
   MouseButton,
   RGBA,
   TextAttributes,
-  type CliRenderer,
   type KeyEvent,
   type MouseEvent,
   type OptimizedBuffer,
+  type RenderContext,
+  type RenderableOptions,
 } from "@opentui/core";
 import {
   DrawState,
@@ -177,29 +177,98 @@ function isInsideRect(
   return x >= left && x < left + width && y >= top && y < top + height;
 }
 
-export class OpenTuiDrawApp extends FrameBufferRenderable {
+export interface TermDrawRenderableOptions extends RenderableOptions<TermDrawRenderable> {
+  width?: number | "auto" | `${number}%`;
+  height?: number | "auto" | `${number}%`;
+  respectAlpha?: boolean;
+  onSave?: (art: string) => void;
+  onCancel?: () => void;
+  autoFocus?: boolean;
+  showStartupLogo?: boolean;
+  cancelOnCtrlC?: boolean;
+}
+
+export class TermDrawRenderable extends FrameBufferRenderable {
   private readonly state: DrawState;
-  private showStartupLogo = true;
-  private readonly handleKeyPressBound = (key: KeyEvent) => {
-    this.handleKeyPressEvent(key);
-  };
+  private onSaveCallback: ((art: string) => void) | null = null;
+  private onCancelCallback: (() => void) | null = null;
+  private autoFocusEnabled = false;
+  private startupLogoEnabled = true;
+  private startupLogoDismissed = false;
+  private cancelOnCtrlCEnabled = false;
 
-  constructor(
-    private readonly renderer: CliRenderer,
-    private readonly onFinish: (art: string | null) => void,
-  ) {
-    super(renderer, {
-      id: "draw-app",
-      width: renderer.terminalWidth,
-      height: renderer.terminalHeight,
-      position: "absolute",
-      left: 0,
-      top: 0,
-      zIndex: 1,
+  constructor(ctx: RenderContext, options: TermDrawRenderableOptions = {}) {
+    const {
+      width,
+      height,
+      onSave,
+      onCancel,
+      autoFocus = false,
+      showStartupLogo = true,
+      cancelOnCtrlC = false,
+      respectAlpha,
+      ...renderableOptions
+    } = options;
+
+    super(ctx, {
+      id: options.id ?? "term-draw",
+      width: typeof width === "number" ? width : 1,
+      height: typeof height === "number" ? height : 1,
+      respectAlpha,
+      ...renderableOptions,
+    } as any);
+
+    this.state = new DrawState(this.width, this.height);
+    this.focusable = true;
+    this.onSave = onSave;
+    this.onCancel = onCancel;
+    this.showStartupLogo = showStartupLogo;
+    this.autoFocus = autoFocus;
+    this.cancelOnCtrlC = cancelOnCtrlC;
+
+    if (width !== undefined) {
+      this.width = width;
+    }
+    if (height !== undefined) {
+      this.height = height;
+    }
+
+    this.syncCanvasLayout();
+  }
+
+  public set onSave(handler: ((art: string) => void) | undefined) {
+    this.onSaveCallback = handler ?? null;
+  }
+
+  public set onCancel(handler: (() => void) | undefined) {
+    this.onCancelCallback = handler ?? null;
+  }
+
+  public set autoFocus(value: boolean | undefined) {
+    this.autoFocusEnabled = value ?? false;
+
+    if (!this.autoFocusEnabled) return;
+
+    queueMicrotask(() => {
+      if (this.isDestroyed || !this.autoFocusEnabled) return;
+      this.focus();
     });
+  }
 
-    this.state = new DrawState(renderer.terminalWidth, renderer.terminalHeight);
-    this.renderer.keyInput.on("keypress", this.handleKeyPressBound);
+  public set showStartupLogo(value: boolean | undefined) {
+    this.startupLogoEnabled = value ?? true;
+    if (!this.startupLogoEnabled) {
+      this.startupLogoDismissed = true;
+    }
+    this.requestRender();
+  }
+
+  public set cancelOnCtrlC(value: boolean | undefined) {
+    this.cancelOnCtrlCEnabled = value ?? false;
+  }
+
+  public exportArt(): string {
+    return this.state.exportArt();
   }
 
   protected override onResize(width: number, height: number): void {
@@ -298,61 +367,56 @@ export class OpenTuiDrawApp extends FrameBufferRenderable {
     super.renderSelf(buffer);
   }
 
-  protected override destroySelf(): void {
-    this.renderer.keyInput.off("keypress", this.handleKeyPressBound);
-    super.destroySelf();
-  }
-
-  private handleKeyPressEvent(key: KeyEvent): void {
+  public override handleKeyPress(key: KeyEvent): boolean {
     const name = key.name.toLowerCase();
 
     this.dismissStartupLogo();
 
-    if ((key.ctrl && name === "c") || (key.ctrl && name === "q")) {
+    if ((this.cancelOnCtrlCEnabled && key.ctrl && name === "c") || (key.ctrl && name === "q")) {
       key.preventDefault();
-      this.onFinish(null);
-      return;
+      this.onCancelCallback?.();
+      return true;
     }
 
     if (name === "escape") {
       key.preventDefault();
       this.state.clearSelection();
       this.requestRender();
-      return;
+      return true;
     }
 
     if (name === "enter" || name === "return" || (key.ctrl && name === "s")) {
       key.preventDefault();
-      this.onFinish(this.state.exportArt());
-      return;
+      this.onSaveCallback?.(this.state.exportArt());
+      return true;
     }
 
     if (name === "tab" || (key.ctrl && name === "t")) {
       key.preventDefault();
       this.state.cycleMode();
       this.requestRender();
-      return;
+      return true;
     }
 
     if (key.ctrl && !key.shift && name === "z") {
       key.preventDefault();
       this.state.undo();
       this.requestRender();
-      return;
+      return true;
     }
 
     if ((key.ctrl && name === "y") || (key.ctrl && key.shift && name === "z")) {
       key.preventDefault();
       this.state.redo();
       this.requestRender();
-      return;
+      return true;
     }
 
     if (key.ctrl && name === "x") {
       key.preventDefault();
       this.state.clearCanvas();
       this.requestRender();
-      return;
+      return true;
     }
 
     if (
@@ -363,7 +427,7 @@ export class OpenTuiDrawApp extends FrameBufferRenderable {
       key.preventDefault();
       this.state.deleteSelectedObject();
       this.requestRender();
-      return;
+      return true;
     }
 
     if (name === "up") {
@@ -374,7 +438,7 @@ export class OpenTuiDrawApp extends FrameBufferRenderable {
         this.state.moveCursor(0, -1);
       }
       this.requestRender();
-      return;
+      return true;
     }
 
     if (name === "down") {
@@ -385,7 +449,7 @@ export class OpenTuiDrawApp extends FrameBufferRenderable {
         this.state.moveCursor(0, 1);
       }
       this.requestRender();
-      return;
+      return true;
     }
 
     if (name === "left") {
@@ -396,7 +460,7 @@ export class OpenTuiDrawApp extends FrameBufferRenderable {
         this.state.moveCursor(-1, 0);
       }
       this.requestRender();
-      return;
+      return true;
     }
 
     if (name === "right") {
@@ -407,7 +471,7 @@ export class OpenTuiDrawApp extends FrameBufferRenderable {
         this.state.moveCursor(1, 0);
       }
       this.requestRender();
-      return;
+      return true;
     }
 
     if (this.state.currentMode === "box") {
@@ -415,14 +479,14 @@ export class OpenTuiDrawApp extends FrameBufferRenderable {
         key.preventDefault();
         this.state.cycleBoxStyle(-1);
         this.requestRender();
-        return;
+        return true;
       }
 
       if (key.raw === "]") {
         key.preventDefault();
         this.state.cycleBoxStyle(1);
         this.requestRender();
-        return;
+        return true;
       }
     }
 
@@ -431,36 +495,38 @@ export class OpenTuiDrawApp extends FrameBufferRenderable {
         key.preventDefault();
         this.state.cycleBrush(-1);
         this.requestRender();
-        return;
+        return true;
       }
 
       if (key.raw === "]") {
         key.preventDefault();
         this.state.cycleBrush(1);
         this.requestRender();
-        return;
+        return true;
       }
 
       if (name === "space") {
         key.preventDefault();
         this.state.stampBrushAtCursor();
         this.requestRender();
-        return;
+        return true;
       }
 
       if (name === "backspace" || name === "delete") {
         key.preventDefault();
         this.state.eraseAtCursor();
         this.requestRender();
-        return;
+        return true;
       }
 
       if (isPrintableKey(key)) {
         key.preventDefault();
         this.state.setBrush(key.raw);
         this.requestRender();
+        return true;
       }
-      return;
+
+      return false;
     }
 
     if (this.state.currentMode === "text") {
@@ -468,33 +534,38 @@ export class OpenTuiDrawApp extends FrameBufferRenderable {
         key.preventDefault();
         this.state.backspace();
         this.requestRender();
-        return;
+        return true;
       }
 
       if (name === "delete") {
         key.preventDefault();
         this.state.deleteAtCursor();
         this.requestRender();
-        return;
+        return true;
       }
 
       if (name === "space") {
         key.preventDefault();
         this.state.insertCharacter(" ");
         this.requestRender();
-        return;
+        return true;
       }
 
       if (isPrintableKey(key)) {
         key.preventDefault();
         this.state.insertCharacter(key.raw);
         this.requestRender();
+        return true;
       }
     }
+
+    return false;
   }
 
   private dismissStartupLogo(): void {
-    this.showStartupLogo = false;
+    if (!this.startupLogoEnabled || this.startupLogoDismissed) return;
+    this.startupLogoDismissed = true;
+    this.requestRender();
   }
 
   private syncCanvasLayout(): AppLayout {
@@ -917,7 +988,7 @@ export class OpenTuiDrawApp extends FrameBufferRenderable {
   }
 
   private drawStartupLogo(layout: AppLayout): void {
-    if (!this.showStartupLogo) return;
+    if (!this.startupLogoEnabled || this.startupLogoDismissed) return;
 
     const logoWidth = Math.max(...STARTUP_LOGO_LINES.map((line) => visibleCellCount(line)));
     const logoHeight = STARTUP_LOGO_LINES.length;
@@ -1005,23 +1076,4 @@ export function buildHelpText(binaryName = "termdraw"): string {
       `  -h, --help          show this help\n`,
     4000,
   );
-}
-
-export function createResizeHandler(
-  renderer: CliRenderer,
-  app: OpenTuiDrawApp,
-): (width: number, height: number) => void {
-  return (width: number, height: number) => {
-    app.width = width;
-    app.height = height;
-    renderer.requestRender();
-  };
-}
-
-export function attachResize(renderer: CliRenderer, app: OpenTuiDrawApp): () => void {
-  const resizeHandler = createResizeHandler(renderer, app);
-  renderer.on(CliRenderEvents.RESIZE, resizeHandler);
-  return () => {
-    renderer.off(CliRenderEvents.RESIZE, resizeHandler);
-  };
 }

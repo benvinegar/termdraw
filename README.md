@@ -35,19 +35,19 @@ Draw something, then press `Enter` or `Ctrl+S` to save. By default, termDRAW! wr
 Write directly to a file:
 
 ```bash
-bun run index.ts -- --output diagram.txt
+bun run start -- --output diagram.txt
 ```
 
 Export as a fenced Markdown code block:
 
 ```bash
-bun run index.ts -- --fenced > diagram.md
+bun run start -- --fenced > diagram.md
 ```
 
 Show CLI help:
 
 ```bash
-bun run index.ts -- --help
+bun run start -- --help
 ```
 
 ## Usage
@@ -63,19 +63,50 @@ Controls are shown in the app footer and tool palette.
 Plain text to stdout:
 
 ```bash
-bun run index.ts > drawing.txt
+bun run start > drawing.txt
 ```
 
 Plain text to a file:
 
 ```bash
-bun run index.ts -- --output drawing.txt
+bun run start -- --output drawing.txt
 ```
 
 Markdown fenced output:
 
 ```bash
-bun run index.ts -- --fenced > drawing.md
+bun run start -- --fenced > drawing.md
+```
+
+## Embedding
+
+termDRAW! can also be mounted as an OpenTUI React component inside another terminal app.
+
+```tsx
+import { createCliRenderer } from "@opentui/core";
+import { createRoot } from "@opentui/react";
+import { TermDraw } from "termdraw";
+
+const renderer = await createCliRenderer({
+  useMouse: true,
+  enableMouseMovement: true,
+  autoFocus: true,
+  screenMode: "alternate-screen",
+});
+
+createRoot(renderer).render(
+  <TermDraw
+    width="100%"
+    height="100%"
+    autoFocus
+    onSave={(art) => {
+      console.log(art);
+    }}
+    onCancel={() => {
+      renderer.destroy();
+    }}
+  />,
+);
 ```
 
 ## Development
