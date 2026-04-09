@@ -22,6 +22,26 @@ describe("DrawState", () => {
     expect(state.exportArt()).toBe("####");
   });
 
+  test("clicking empty space in line mode does not create a one-cell line", () => {
+    const state = new DrawState(20, 10);
+    state.setMode("box");
+
+    const boxStart = canvasPoint(state, 1, 1);
+    const boxEnd = canvasPoint(state, 4, 3);
+    state.handlePointerEvent({ type: "down", button: MouseButton.LEFT, ...boxStart });
+    state.handlePointerEvent({ type: "drag", button: MouseButton.LEFT, ...boxEnd });
+    state.handlePointerEvent({ type: "up", button: MouseButton.LEFT, ...boxEnd });
+    expect(state.hasSelectedObject).toBe(true);
+
+    state.setMode("line");
+    const clickPoint = canvasPoint(state, 10, 4);
+    state.handlePointerEvent({ type: "down", button: MouseButton.LEFT, ...clickPoint });
+    state.handlePointerEvent({ type: "up", button: MouseButton.LEFT, ...clickPoint });
+
+    expect(state.hasSelectedObject).toBe(false);
+    expect(state.getCompositeCell(10, 4)).toBe(" ");
+  });
+
   test("nested boxes still alternate heavy and light borders", () => {
     const state = new DrawState(30, 12);
     state.setMode("box");

@@ -1169,6 +1169,11 @@ export class DrawState {
       const end = this.pendingLine.end;
       this.pendingLine = null;
 
+      if (start.x === end.x && start.y === end.y) {
+        this.setStatus(`Line cancelled at ${start.x + 1},${start.y + 1}.`);
+        return;
+      }
+
       this.pushUndo();
       const object: LineObject = {
         id: this.createObjectId(),
