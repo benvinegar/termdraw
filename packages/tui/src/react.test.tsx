@@ -53,7 +53,7 @@ test("TermDrawApp supports custom footer text", async () => {
       height="100%"
       autoFocus
       showStartupLogo={false}
-      footerText="Enter inserts into Pi • Ctrl+Q cancels"
+      footerText="Enter / Ctrl+S inserts into Pi • Ctrl+Q cancels"
     />,
     {
       width: 96,
@@ -66,7 +66,7 @@ test("TermDrawApp supports custom footer text", async () => {
   await renderOnce();
 
   const frame = captureCharFrame();
-  expect(frame).toContain("Enter inserts into Pi");
+  expect(frame).toContain("Enter / Ctrl+S inserts into Pi");
   expect(frame).toContain("Ctrl+Q cancels");
 });
 
