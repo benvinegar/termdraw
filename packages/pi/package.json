@@ -1,0 +1,50 @@
+{
+  "name": "pi-termdraw",
+  "version": "0.1.0",
+  "description": "Pi extension package that embeds termDRAW inside Pi via opentui-island.",
+  "keywords": [
+    "drawing",
+    "opentui",
+    "pi-extension",
+    "pi-package",
+    "terminal",
+    "tui"
+  ],
+  "license": "MIT",
+  "files": [
+    "extensions",
+    "islands",
+    "README.md",
+    "LICENSE"
+  ],
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@benvinegar/termdraw": "file:../tui",
+    "@opentui/core": "^0.1.97",
+    "@opentui/react": "^0.1.97",
+    "opentui-island": "^0.2.0",
+    "react": "^19.2.0"
+  },
+  "devDependencies": {
+    "@mariozechner/pi-coding-agent": "*",
+    "@mariozechner/pi-tui": "*",
+    "@types/react": "^19.2.14",
+    "typescript": "^5.9.3"
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "*",
+    "@mariozechner/pi-tui": "*"
+  },
+  "engines": {
+    "bun": ">=1.3.0",
+    "node": ">=18"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions"
+    ]
+  }
+}

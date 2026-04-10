@@ -139,12 +139,7 @@ import { TermDrawEditor } from "@benvinegar/termdraw";
 
 ## Development
 
-This repo is organized as a small workspace:
-
-- `packages/tui` — the main `@benvinegar/termdraw` OpenTUI app/library package
-- `packages/pi` — the Pi embedding prototype package
-
-From the repo root, the main scripts still proxy to the TUI package and shared checks:
+If you want to hack on termDRAW! locally:
 
 ```bash
 bun run format

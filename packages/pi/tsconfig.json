@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@benvinegar/termdraw": ["../tui/src/index.ts"]
+    }
+  },
+  "include": ["extensions/**/*.ts", "islands/**/*.tsx"]
+}
