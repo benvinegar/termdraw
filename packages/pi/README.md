@@ -42,6 +42,28 @@ Or run directly for a one-off test:
 pi -e ./packages/pi/extensions/index.ts
 ```
 
+## Smoke test
+
+There is a tmux-based end-to-end smoke test that verifies:
+
+- Pi starts with the extension loaded
+- `/termdraw` opens the embedded overlay
+- text can be entered into the island
+- saving returns the drawing back into the Pi editor
+
+Run it from the repo root:
+
+```bash
+bun run smoke:pi
+```
+
+Requirements:
+
+- `pi` installed and on `PATH`
+- `tmux` installed
+
+Set `PI_TERMDRAW_SMOKE_KEEP_SESSION=1` if you want the tmux session left alive for debugging on exit.
+
 ## Usage
 
 Inside Pi:

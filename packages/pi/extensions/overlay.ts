@@ -21,6 +21,11 @@ const LOADING_STATUS = "Starting termDRAW in a Bun sidecar…";
 const INSERTED_MESSAGE = "Inserted drawing into the Pi editor.";
 const CANCELLED_MESSAGE = "Drawing cancelled.";
 const ERROR_PREFIX = "termDRAW failed to start:";
+const SMOKE_TEXT = process.env.PI_TERMDRAW_SMOKE_TEXT?.trim() ?? "";
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 type TermDrawSaveEvent = OpenTuiBridgeEvent<"save", { art: string }>;
 type TermDrawCancelEvent = OpenTuiBridgeEvent<"cancel", { reason?: string }>;
@@ -56,6 +61,7 @@ function formatForEditor(art: string): string {
 class TermDrawOverlay implements Component {
   private readonly surfaceHeight: number;
   private readonly width: number;
+  private readonly smokeText: string;
   private surface: PiTuiOpenTuiSurface | null = null;
   private unsubscribeFromEvents: (() => void) | null = null;
   private status = LOADING_STATUS;
@@ -69,6 +75,7 @@ class TermDrawOverlay implements Component {
   ) {
     this.width = Math.max(1, this.tui.terminal.columns);
     this.surfaceHeight = Math.max(1, this.tui.terminal.rows - 1);
+    this.smokeText = SMOKE_TEXT;
     enablePiTuiMouseMode(this.tui.terminal);
     void this.initialize();
   }
@@ -105,12 +112,39 @@ class TermDrawOverlay implements Component {
       });
       await this.surface.sync(this.width);
       this.status = READY_STATUS;
+      if (this.smokeText.length > 0) {
+        void this.runSmokeAutomation();
+      }
     } catch (error) {
       this.error = formatError(error);
       this.status = `${ERROR_PREFIX} ${this.error}`;
     }
 
     this.tui.requestRender();
+  }
+
+  private async runSmokeAutomation(): Promise<void> {
+    if (!this.surface || this.closing) {
+      return;
+    }
+
+    try {
+      await delay(150);
+      await this.surface.sendInput("\t");
+      await delay(50);
+      await this.surface.sendInput("\t");
+      await delay(50);
+
+      for (const char of this.smokeText) {
+        await this.surface.sendInput(char);
+      }
+
+      await delay(100);
+      await this.surface.sendInput("\r");
+    } catch (error) {
+      this.status = `Smoke automation failed: ${formatError(error)}`;
+      this.tui.requestRender();
+    }
   }
 
   handleInput(data: string): void {

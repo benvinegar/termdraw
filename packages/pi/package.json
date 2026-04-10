@@ -19,7 +19,8 @@
   ],
   "type": "module",
   "scripts": {
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "smoke:pi": "bash ./scripts/smoke-pi-save.sh"
   },
   "dependencies": {
     "@benvinegar/termdraw": "file:../tui",

@@ -11,6 +11,7 @@
     "build": "cd packages/tui && bun run build",
     "test": "cd packages/tui && bun test",
     "typecheck": "cd packages/tui && bun run typecheck && cd ../pi && bun run typecheck",
+    "smoke:pi": "cd packages/pi && bun run smoke:pi",
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
     "lint": "oxlint .",
