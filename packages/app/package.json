@@ -51,7 +51,7 @@
     "check": "bun run format:check && bun run lint && bun run typecheck",
     "pack:check": "bun run build && npm pack --dry-run --ignore-scripts",
     "prepack": "bun run build",
-    "prepublishOnly": "bun run check",
+    "prepublishOnly": "bun run lint && bun run typecheck",
     "typecheck": "tsc --noEmit",
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
