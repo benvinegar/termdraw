@@ -35,8 +35,11 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Verify package
+      - name: Verify workspace
         run: bun run check
+
+      - name: Verify published package contents
+        run: bun run pack:check
 
       - name: Publish package
         run: npm publish --access public --provenance

@@ -11,6 +11,7 @@
     "build": "cd packages/tui && bun run build",
     "test": "cd packages/tui && bun test",
     "typecheck": "cd packages/tui && bun run typecheck && cd ../pi && bun run typecheck",
+    "pack:check": "cd packages/tui && bun run pack:check",
     "smoke:pi": "cd packages/pi && bun run smoke:pi",
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
@@ -38,5 +39,6 @@
     "*.{js,jsx,ts,tsx,mjs,cjs,mts,cts}": [
       "oxlint --fix --quiet"
     ]
-  }
+  },
+  "packageManager": "bun@1.3.10"
 }

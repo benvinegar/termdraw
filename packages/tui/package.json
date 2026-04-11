@@ -52,6 +52,7 @@
     "build:lib": "tsc -p tsconfig.build.json",
     "build:cli": "bun build src/cli.tsx --outdir dist --target=bun && chmod +x dist/cli.js",
     "check": "bun run format:check && bun run lint && bun test && bun run typecheck",
+    "pack:check": "bun run build && npm pack --dry-run --ignore-scripts",
     "prepack": "bun run build",
     "prepublishOnly": "bun run check",
     "test": "bun test",

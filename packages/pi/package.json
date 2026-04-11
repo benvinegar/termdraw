@@ -10,7 +10,16 @@
     "terminal",
     "tui"
   ],
+  "homepage": "https://github.com/benvinegar/termdraw#readme",
+  "bugs": {
+    "url": "https://github.com/benvinegar/termdraw/issues"
+  },
   "license": "MIT",
+  "author": "Ben Vinegar",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/benvinegar/termdraw.git"
+  },
   "files": [
     "extensions",
     "islands",
