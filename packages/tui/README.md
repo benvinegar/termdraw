@@ -1,106 +1,62 @@
 # termDRAW!
 
-termDRAW! is an object-based terminal illustrator for diagrams, UI mocks, and terminal-native graphics.
+termDRAW! is a terminal drawing editor for developers who want editable diagrams, UI mocks, and text graphics without leaving the terminal.
 
-## Why termDRAW!
+## What it does
 
-- Make terminal-native diagrams without leaving your terminal.
-- Keep editing as you think: drawn elements stay selectable, movable, and resizable.
-- Group related content inside boxes so diagrams stay organized while you iterate.
-- Export plain text or fenced Markdown for READMEs, docs, tickets, and agent prompts.
+- Draw boxes, lines, paint strokes, and text as retained objects.
+- Select, move, resize, and recolor objects after you draw them.
+- Group related content inside boxes while everything stays aligned to terminal cells.
+- Export plain text or fenced Markdown for READMEs, docs, tickets, and prompts.
+- Embed the editor in OpenTUI apps with React components.
 
 ## Install
 
 Requirements:
 
-- [Bun](https://bun.sh)
+- [Bun](https://bun.sh) 1.3+
 - A terminal with mouse support
 
-From npm:
-
 ```bash
-bun add @benvinegar/termdraw
-```
-
-Or from source:
-
-```bash
-git clone https://github.com/benvinegar/termdraw.git
-cd termdraw
-bun install
+npm install --global @benvinegar/termdraw
 ```
 
 ## Quick start
 
-Start the app from a local checkout:
-
 ```bash
-bun run start
+termdraw
 ```
 
-Or run the published CLI:
-
-```bash
-bunx @benvinegar/termdraw
-```
-
-Draw something, then press `Enter` or `Ctrl+S` to save. By default, termDRAW! writes the result to stdout after the app exits.
-
-Write directly to a file:
-
-```bash
-bun run start -- --output diagram.txt
-```
-
-Export as a fenced Markdown code block:
-
-```bash
-bun run start -- --fenced > diagram.md
-```
-
-Show CLI help:
-
-```bash
-bun run start -- --help
-```
+Draw something, then press `Enter` or `Ctrl+S` to write the result to stdout.
 
 ## Usage
 
-termDRAW! behaves more like a small vector-style editor than a paint program. Lines, boxes, and text are retained objects, so you can keep rearranging the diagram after you draw it. Boxes can also act as frames for fully contained children.
+termDRAW! behaves more like a small vector-style editor than a paint program. Lines, boxes, paint strokes, and text are retained objects, so you can keep rearranging the diagram after you draw it. Boxes can also act as frames for fully contained children.
 
 Everything still snaps to terminal cells. termDRAW! outputs terminal art, not SVG or bitmap graphics.
 
-Controls are shown in the app footer and tool palette. Tool hotkeys follow common graphics-editor muscle memory: `B` Brush, `A` Select, `U` Box, `P` Line, `T` Text. The Line tool automatically chooses clean line glyphs, including sub-cell Braille for shallow or steep angles.
+Controls are shown in the app footer and tool palette. Tool hotkeys follow common graphics-editor muscle memory: `B` Brush, `A` Select, `U` Box, `P` Line, `T` Text. The Line tool supports Smooth, Single, and Double line stencils.
 
 ## Output examples
 
-Plain text to stdout:
-
 ```bash
-bun run start > drawing.txt
+# save plain text directly to a file
+termdraw --output diagram.txt
+
+# export a fenced Markdown code block
+termdraw --fenced > diagram.md
+
+# show CLI help
+termdraw --help
 ```
 
-Plain text to a file:
+## Embed in an OpenTUI app
+
+Install the package and peer dependencies:
 
 ```bash
-bun run start -- --output drawing.txt
+npm install @benvinegar/termdraw @opentui/core @opentui/react react
 ```
-
-Markdown fenced output:
-
-```bash
-bun run start -- --fenced > drawing.md
-```
-
-## Embedding
-
-termDRAW! can also be mounted as OpenTUI React components inside another terminal app.
-
-- `TermDrawApp`: the full app chrome with header, palette, footer, and splash
-- `TermDrawEditor`: the bare editor surface without the surrounding app chrome
-- `TermDraw`: an alias for `TermDrawApp`
-
-Full chrome:
 
 ```tsx
 import { createCliRenderer } from "@opentui/core";
@@ -129,24 +85,17 @@ createRoot(renderer).render(
 );
 ```
 
-Bare editor surface:
+Also exported:
 
-```tsx
-import { TermDrawEditor } from "@benvinegar/termdraw";
+- `TermDrawApp` — full app chrome with header, palette, footer, and splash
+- `TermDrawEditor` — bare editor surface without surrounding chrome
+- `TermDraw` — alias for `TermDrawApp`
 
-<TermDrawEditor width="100%" height="100%" autoFocus onSave={(art) => console.log(art)} />;
-```
+## Docs
 
-## Development
-
-If you want to hack on termDRAW! locally:
-
-```bash
-bun run format
-bun run lint
-bun test
-bun run typecheck
-```
+- CLI reference: run `termdraw --help`
+- React exports: [`src/index.ts`](./src/index.ts)
+- Pi embedding example: [`../pi`](../pi)
 
 ## Contributing
 
@@ -155,19 +104,16 @@ Contributions are welcome.
 Before opening a PR:
 
 - keep the change focused
-- run `bun run format`, `bun run lint`, `bun test`, and `bun run typecheck`
-- add or update tests when you change editor behavior
-- open an issue first for larger UX or architecture changes
+- run `bun run check`
+- add or update tests when editor behavior changes
+- open an issue first for larger UX or API changes
+
+## Security
+
+Please report security issues privately through GitHub Security Advisories:
+
+- <https://github.com/benvinegar/termdraw/security/advisories/new>
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
-
-## Publishing note
-
-The unscoped `termdraw` package name is already taken on npm, so this package is configured to publish as `@benvinegar/termdraw`.
-
-## Support
-
-- Bugs and feature requests: [GitHub issues](https://github.com/benvinegar/termdraw/issues)
-- Source: [github.com/benvinegar/termdraw](https://github.com/benvinegar/termdraw)
+MIT. See [LICENSE](../../LICENSE).
