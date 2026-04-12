@@ -76,6 +76,51 @@ type TextObject = BaseDrawObject & {
 
 export type DrawObject = BoxObject | LineObject | PaintObject | TextObject;
 
+export type DraftDrawObject =
+  | {
+      type: "box";
+      color?: InkColor;
+      left: number;
+      top: number;
+      right: number;
+      bottom: number;
+      style?: BoxStyle;
+    }
+  | {
+      type: "line";
+      color?: InkColor;
+      x1: number;
+      y1: number;
+      x2: number;
+      y2: number;
+      brush?: string;
+    }
+  | {
+      type: "paint";
+      color?: InkColor;
+      points: Point[];
+      brush?: string;
+    }
+  | {
+      type: "text";
+      color?: InkColor;
+      x: number;
+      y: number;
+      content: string;
+    };
+
+export type InsertDraftObjectsOptions = {
+  anchor?: "cursor" | "center";
+  switchToSelectMode?: boolean;
+  selectInserted?: boolean;
+  statusLabel?: string | null;
+};
+
+export type InsertDraftObjectsResult = {
+  insertedIds: string[];
+  bounds: { left: number; top: number; right: number; bottom: number } | null;
+};
+
 type Snapshot = {
   objects: DrawObject[];
   selectedObjectIds: string[];
@@ -1213,6 +1258,77 @@ export class DrawState {
         "Text mode: click empty space to type, click text to edit, and use its virtual selection box to move it.",
       );
     }
+  }
+
+  public insertDraftObjects(
+    drafts: DraftDrawObject[],
+    options: InsertDraftObjectsOptions = {},
+  ): InsertDraftObjectsResult {
+    if (drafts.length === 0) {
+      if (options.statusLabel !== null) {
+        this.setStatus("Nothing to insert.");
+      }
+      return { insertedIds: [], bounds: null };
+    }
+
+    const materialized = drafts.map((draft) => this.materializeDraftObject(draft));
+    const originalBounds = getBoundsUnion(materialized);
+    if (!originalBounds) {
+      if (options.statusLabel !== null) {
+        this.setStatus("Nothing to insert.");
+      }
+      return { insertedIds: [], bounds: null };
+    }
+
+    const anchor = options.anchor ?? "cursor";
+    const desiredLeft =
+      anchor === "center"
+        ? Math.max(
+            0,
+            Math.floor((this.canvasWidth - (originalBounds.right - originalBounds.left + 1)) / 2),
+          )
+        : this.cursorX;
+    const desiredTop =
+      anchor === "center"
+        ? Math.max(
+            0,
+            Math.floor((this.canvasHeight - (originalBounds.bottom - originalBounds.top + 1)) / 2),
+          )
+        : this.cursorY;
+    const translated = this.translateObjectTreeWithinCanvas(
+      materialized,
+      desiredLeft - originalBounds.left,
+      desiredTop - originalBounds.top,
+    );
+    const bounds = getBoundsUnion(translated);
+
+    this.pushUndo();
+    this.setObjects([...this.objects, ...translated]);
+    this.activeTextObjectId = null;
+
+    if (options.selectInserted ?? true) {
+      const insertedIds = translated.map((object) => object.id);
+      this.setSelectedObjects(insertedIds, insertedIds.at(-1) ?? null);
+    }
+
+    if (options.switchToSelectMode ?? true) {
+      this.setMode("select");
+    }
+
+    if (options.statusLabel !== null) {
+      this.setStatus(
+        options.statusLabel?.trim()
+          ? `Inserted ${options.statusLabel}.`
+          : translated.length === 1
+            ? `Inserted ${this.describeObject(translated[0]!)}.`
+            : `Inserted ${translated.length} objects.`,
+      );
+    }
+
+    return {
+      insertedIds: translated.map((object) => object.id),
+      bounds,
+    };
   }
 
   public stampBrushAtCursor(): void {
@@ -2532,6 +2648,61 @@ export class DrawState {
       ...object,
       z: this.allocateZIndex(),
     } as T;
+  }
+
+  private materializeDraftObject(draft: DraftDrawObject): DrawObject {
+    if (draft.type === "box") {
+      return {
+        id: this.createObjectId(),
+        z: this.allocateZIndex(),
+        parentId: null,
+        color: draft.color ?? this.inkColor,
+        type: "box",
+        left: draft.left,
+        top: draft.top,
+        right: draft.right,
+        bottom: draft.bottom,
+        style: draft.style ?? this.boxStyle,
+      };
+    }
+
+    if (draft.type === "line") {
+      return {
+        id: this.createObjectId(),
+        z: this.allocateZIndex(),
+        parentId: null,
+        color: draft.color ?? this.inkColor,
+        type: "line",
+        x1: draft.x1,
+        y1: draft.y1,
+        x2: draft.x2,
+        y2: draft.y2,
+        brush: normalizeCellCharacter(draft.brush ?? this.brush),
+      };
+    }
+
+    if (draft.type === "paint") {
+      return {
+        id: this.createObjectId(),
+        z: this.allocateZIndex(),
+        parentId: null,
+        color: draft.color ?? this.inkColor,
+        type: "paint",
+        points: draft.points.map((point) => ({ ...point })),
+        brush: normalizeCellCharacter(draft.brush ?? this.brush),
+      };
+    }
+
+    return {
+      id: this.createObjectId(),
+      z: this.allocateZIndex(),
+      parentId: null,
+      color: draft.color ?? this.inkColor,
+      type: "text",
+      x: draft.x,
+      y: draft.y,
+      content: draft.content,
+    };
   }
 
   private bringObjectsToFront(objects: DrawObject[]): DrawObject[] {

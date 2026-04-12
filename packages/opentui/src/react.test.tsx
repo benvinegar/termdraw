@@ -70,6 +70,56 @@ test("TermDrawApp supports custom footer text", async () => {
   expect(frame).toContain("Ctrl+Q cancels");
 });
 
+test("TermDrawApp can open the stencil browser and insert a template", async () => {
+  let savedArt: string | null = null;
+
+  const { captureCharFrame, mockInput, renderOnce } = await testRender(
+    <TermDrawApp
+      width="100%"
+      height="100%"
+      autoFocus
+      showStartupLogo={false}
+      onSave={(art) => {
+        savedArt = art;
+      }}
+    />,
+    {
+      width: 96,
+      height: 32,
+      useMouse: true,
+      enableMouseMovement: true,
+    },
+  );
+
+  await renderOnce();
+
+  mockInput.pressKey("p", { ctrl: true });
+  await renderOnce();
+
+  expect(captureCharFrame()).toContain("UI Stencils");
+
+  await mockInput.typeText("dialog");
+  await renderOnce();
+
+  expect(captureCharFrame()).toContain("Dialog / Modal");
+
+  mockInput.pressEnter();
+  await renderOnce();
+
+  const insertedFrame = captureCharFrame();
+  expect(insertedFrame).not.toContain("UI Stencils");
+  expect(insertedFrame).toContain("Discard draft?");
+
+  mockInput.pressEnter();
+  await renderOnce();
+
+  if (savedArt === null) {
+    throw new Error("Expected inserted stencil to save rendered art.");
+  }
+
+  expect(String(savedArt).includes("Discard draft?")).toBe(true);
+});
+
 test("TermDrawEditor renders without full chrome and can save", async () => {
   let savedArt: string | null = null;
 

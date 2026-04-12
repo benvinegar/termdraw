@@ -21,6 +21,15 @@ import {
   type InkColor,
   type PointerEventLike,
 } from "./draw-state.js";
+import {
+  clampStencilBrowserSelection,
+  createStencilBrowserState,
+  getFilteredStencils,
+  renderStencilPreview,
+  STENCIL_BROWSER_CATEGORY_OPTIONS,
+  type StencilBrowserState,
+} from "./stencil-browser.js";
+import type { StencilDefinition } from "./stencils.js";
 
 const MIN_WIDTH = 45;
 const MIN_HEIGHT = 27;
@@ -31,6 +40,10 @@ const TOOL_BUTTON_HEIGHT = 3;
 const BOX_STYLE_ROW_COUNT = 4;
 const COLOR_SWATCH_WIDTH = 3;
 const COLOR_SWATCH_COLUMNS = 4;
+const STENCIL_BROWSER_SIDEBAR_WIDTH = 18;
+const STENCIL_BROWSER_CARD_HEIGHT = 9;
+const STENCIL_BROWSER_CARD_GAP = 1;
+const STENCIL_BROWSER_MIN_CARD_WIDTH = 28;
 
 const COLORS = {
   background: RGBA.fromHex("#0f172a"),
@@ -140,6 +153,66 @@ function drawSegment(
   return x + visibleCellCount(text);
 }
 
+function drawFilledRect(
+  buffer: OptimizedBuffer,
+  left: number,
+  top: number,
+  width: number,
+  height: number,
+  bg: RGBA,
+  fg = COLORS.text,
+): void {
+  const normalizedWidth = Math.max(0, width);
+  const normalizedHeight = Math.max(0, height);
+  const row = " ".repeat(normalizedWidth);
+  for (let y = 0; y < normalizedHeight; y += 1) {
+    buffer.drawText(row, left, top + y, fg, bg);
+  }
+}
+
+function drawClippedText(
+  buffer: OptimizedBuffer,
+  left: number,
+  top: number,
+  width: number,
+  text: string,
+  fg: RGBA,
+  bg: RGBA,
+  attributes = TextAttributes.NONE,
+): void {
+  if (width <= 0) return;
+  buffer.drawText(padToWidth(truncateToCells(text, width), width), left, top, fg, bg, attributes);
+}
+
+function drawFrameBox(
+  buffer: OptimizedBuffer,
+  left: number,
+  top: number,
+  width: number,
+  height: number,
+  fg: RGBA,
+  bg: RGBA,
+): void {
+  if (width <= 0 || height <= 0) return;
+  drawFilledRect(buffer, left, top, width, height, bg);
+  if (width === 1 || height === 1) return;
+
+  buffer.setCell(left, top, "╭", fg, bg);
+  buffer.setCell(left + width - 1, top, "╮", fg, bg);
+  buffer.setCell(left, top + height - 1, "╰", fg, bg);
+  buffer.setCell(left + width - 1, top + height - 1, "╯", fg, bg);
+
+  for (let x = left + 1; x < left + width - 1; x += 1) {
+    buffer.setCell(x, top, "─", fg, bg);
+    buffer.setCell(x, top + height - 1, "─", fg, bg);
+  }
+
+  for (let y = top + 1; y < top + height - 1; y += 1) {
+    buffer.setCell(left, y, "│", fg, bg);
+    buffer.setCell(left + width - 1, y, "│", fg, bg);
+  }
+}
+
 function mixColor(a: RGBA, b: RGBA, t: number): RGBA {
   const [ar, ag, ab, aa] = a.toInts();
   const [br, bg, bb, ba] = b.toInts();
@@ -222,6 +295,7 @@ export class TermDrawRenderable extends FrameBufferRenderable {
   private startupLogoDismissed = false;
   private cancelOnCtrlCEnabled = false;
   private footerTextOverride: string | null = null;
+  private readonly stencilBrowser: StencilBrowserState = createStencilBrowserState();
 
   constructor(ctx: RenderContext, options: TermDrawRenderableOptions = {}) {
     const {
@@ -320,6 +394,12 @@ export class TermDrawRenderable extends FrameBufferRenderable {
       this.dismissStartupLogo();
     }
 
+    if (this.stencilBrowser.open) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+
     if (this.chromeMode === "full" && layout && !this.state.hasActivePointerInteraction) {
       const toolButton = this.getToolButtons(layout).find((button) =>
         isInsideRect(x, y, button.left, button.top, button.width, button.height),
@@ -402,6 +482,11 @@ export class TermDrawRenderable extends FrameBufferRenderable {
 
     this.drawCanvas();
     this.drawStartupLogo(layout);
+
+    if (this.stencilBrowser.open) {
+      this.drawStencilBrowser();
+    }
+
     super.renderSelf(buffer);
   }
 
@@ -413,6 +498,16 @@ export class TermDrawRenderable extends FrameBufferRenderable {
     if ((this.cancelOnCtrlCEnabled && key.ctrl && name === "c") || (key.ctrl && name === "q")) {
       key.preventDefault();
       this.onCancelCallback?.();
+      return true;
+    }
+
+    if (this.stencilBrowser.open) {
+      return this.handleStencilBrowserKeyPress(key);
+    }
+
+    if (key.ctrl && name === "p") {
+      key.preventDefault();
+      this.openStencilBrowser();
       return true;
     }
 
@@ -598,6 +693,331 @@ export class TermDrawRenderable extends FrameBufferRenderable {
     }
 
     return false;
+  }
+
+  private openStencilBrowser(): void {
+    this.stencilBrowser.open = true;
+    this.stencilBrowser.query = "";
+    this.stencilBrowser.category = "all";
+    this.stencilBrowser.selectedIndex = 0;
+    this.requestRender();
+  }
+
+  private closeStencilBrowser(): void {
+    if (!this.stencilBrowser.open) return;
+    this.stencilBrowser.open = false;
+    this.requestRender();
+  }
+
+  private getFilteredStencilDefinitions(): StencilDefinition[] {
+    const stencils = getFilteredStencils(this.stencilBrowser.query, this.stencilBrowser.category);
+    clampStencilBrowserSelection(this.stencilBrowser, stencils);
+    return stencils;
+  }
+
+  private getStencilBrowserColumnCount(mainWidth: number): number {
+    return mainWidth >= STENCIL_BROWSER_MIN_CARD_WIDTH * 2 + STENCIL_BROWSER_CARD_GAP ? 2 : 1;
+  }
+
+  private cycleStencilBrowserCategory(direction: 1 | -1): void {
+    const currentIndex = STENCIL_BROWSER_CATEGORY_OPTIONS.findIndex(
+      (option) => option.id === this.stencilBrowser.category,
+    );
+    const nextIndex =
+      (currentIndex + direction + STENCIL_BROWSER_CATEGORY_OPTIONS.length) %
+      STENCIL_BROWSER_CATEGORY_OPTIONS.length;
+    this.stencilBrowser.category = STENCIL_BROWSER_CATEGORY_OPTIONS[nextIndex]?.id ?? "all";
+    this.stencilBrowser.selectedIndex = 0;
+    this.requestRender();
+  }
+
+  private moveStencilBrowserSelection(delta: number): void {
+    const stencils = this.getFilteredStencilDefinitions();
+    if (stencils.length === 0) return;
+    this.stencilBrowser.selectedIndex = Math.max(
+      0,
+      Math.min(this.stencilBrowser.selectedIndex + delta, stencils.length - 1),
+    );
+    this.requestRender();
+  }
+
+  private updateStencilBrowserQuery(nextQuery: string): void {
+    this.stencilBrowser.query = nextQuery;
+    this.stencilBrowser.selectedIndex = 0;
+    this.requestRender();
+  }
+
+  private insertSelectedStencil(keepBrowserOpen: boolean): void {
+    const stencils = this.getFilteredStencilDefinitions();
+    const stencil = stencils[this.stencilBrowser.selectedIndex];
+    if (!stencil) {
+      this.requestRender();
+      return;
+    }
+
+    this.state.insertDraftObjects(stencil.create(), {
+      anchor: "cursor",
+      selectInserted: true,
+      switchToSelectMode: true,
+      statusLabel: stencil.name,
+    });
+
+    if (!keepBrowserOpen) {
+      this.stencilBrowser.open = false;
+    }
+
+    this.requestRender();
+  }
+
+  private handleStencilBrowserKeyPress(key: KeyEvent): boolean {
+    const name = key.name.toLowerCase();
+    const mainWidth = Math.max(1, this.width - STENCIL_BROWSER_SIDEBAR_WIDTH - 4);
+    const columns = this.getStencilBrowserColumnCount(mainWidth);
+
+    if ((key.ctrl && name === "p") || name === "escape") {
+      key.preventDefault();
+      this.closeStencilBrowser();
+      return true;
+    }
+
+    if (name === "enter" || name === "return") {
+      key.preventDefault();
+      this.insertSelectedStencil(key.shift);
+      return true;
+    }
+
+    if (name === "tab") {
+      key.preventDefault();
+      this.cycleStencilBrowserCategory(key.shift ? -1 : 1);
+      return true;
+    }
+
+    if (name === "up") {
+      key.preventDefault();
+      this.moveStencilBrowserSelection(-columns);
+      return true;
+    }
+
+    if (name === "down") {
+      key.preventDefault();
+      this.moveStencilBrowserSelection(columns);
+      return true;
+    }
+
+    if (name === "left") {
+      key.preventDefault();
+      this.moveStencilBrowserSelection(-1);
+      return true;
+    }
+
+    if (name === "right") {
+      key.preventDefault();
+      this.moveStencilBrowserSelection(1);
+      return true;
+    }
+
+    if (name === "backspace") {
+      key.preventDefault();
+      this.updateStencilBrowserQuery(Array.from(this.stencilBrowser.query).slice(0, -1).join(""));
+      return true;
+    }
+
+    if (key.ctrl && name === "u") {
+      key.preventDefault();
+      this.updateStencilBrowserQuery("");
+      return true;
+    }
+
+    if (name === "space") {
+      key.preventDefault();
+      this.updateStencilBrowserQuery(`${this.stencilBrowser.query} `);
+      return true;
+    }
+
+    if (isPrintableKey(key)) {
+      key.preventDefault();
+      this.updateStencilBrowserQuery(`${this.stencilBrowser.query}${key.raw}`);
+      return true;
+    }
+
+    return true;
+  }
+
+  private drawStencilBrowser(): void {
+    const modalBg = mixColor(COLORS.background, COLORS.panel, 0.3);
+    const panelBg = mixColor(COLORS.panel, COLORS.background, 0.15);
+    const selectedBg = mixColor(COLORS.select, COLORS.panel, 0.2);
+    const cardBg = mixColor(COLORS.panel, COLORS.background, 0.08);
+    const sidebarLeft = 1;
+    const sidebarWidth = STENCIL_BROWSER_SIDEBAR_WIDTH;
+    const dividerX = sidebarLeft + sidebarWidth;
+    const mainLeft = dividerX + 2;
+    const mainWidth = Math.max(1, this.width - mainLeft - 1);
+    const headerY = 1;
+    const dividerY = 2;
+    const contentTop = 3;
+    const footerY = this.height - 2;
+    const contentHeight = Math.max(1, footerY - contentTop);
+    const filtered = this.getFilteredStencilDefinitions();
+    const selectedStencil = filtered[this.stencilBrowser.selectedIndex] ?? null;
+    const columns = this.getStencilBrowserColumnCount(mainWidth);
+    const cardWidth =
+      columns === 1
+        ? mainWidth
+        : Math.max(
+            STENCIL_BROWSER_MIN_CARD_WIDTH,
+            Math.floor((mainWidth - STENCIL_BROWSER_CARD_GAP) / columns),
+          );
+    const rowHeight = STENCIL_BROWSER_CARD_HEIGHT + STENCIL_BROWSER_CARD_GAP;
+    const totalRows = Math.max(1, Math.ceil(Math.max(filtered.length, 1) / columns));
+    const visibleRows = Math.max(
+      1,
+      Math.floor((contentHeight + STENCIL_BROWSER_CARD_GAP) / rowHeight),
+    );
+    const selectedRow = Math.floor(this.stencilBrowser.selectedIndex / columns);
+    const scrollRow = Math.max(0, Math.min(selectedRow, totalRows - visibleRows));
+    const queryLabel =
+      this.stencilBrowser.query.length > 0
+        ? `Search: ${this.stencilBrowser.query}`
+        : "Search: type to filter";
+    const countLabel = `${filtered.length} stencil${filtered.length === 1 ? "" : "s"}`;
+
+    drawFilledRect(this.frameBuffer, 0, 0, this.width, this.height, modalBg);
+    drawFrameBox(this.frameBuffer, 0, 0, this.width, this.height, COLORS.accent, panelBg);
+    drawClippedText(
+      this.frameBuffer,
+      2,
+      headerY,
+      Math.max(1, dividerX - 3),
+      "UI Stencils",
+      COLORS.accent,
+      panelBg,
+      TextAttributes.BOLD,
+    );
+    drawClippedText(
+      this.frameBuffer,
+      mainLeft,
+      headerY,
+      Math.max(1, mainWidth - visibleCellCount(countLabel) - 2),
+      queryLabel,
+      this.stencilBrowser.query.length > 0 ? COLORS.text : COLORS.dim,
+      panelBg,
+    );
+    drawClippedText(
+      this.frameBuffer,
+      Math.max(mainLeft, this.width - visibleCellCount(countLabel) - 2),
+      headerY,
+      Math.max(1, visibleCellCount(countLabel)),
+      countLabel,
+      COLORS.dim,
+      panelBg,
+    );
+
+    for (let x = 1; x < this.width - 1; x += 1) {
+      this.frameBuffer.setCell(x, dividerY, "─", COLORS.border, panelBg);
+    }
+    this.frameBuffer.setCell(0, dividerY, "├", COLORS.border, panelBg);
+    this.frameBuffer.setCell(this.width - 1, dividerY, "┤", COLORS.border, panelBg);
+
+    for (let y = contentTop; y <= footerY; y += 1) {
+      this.frameBuffer.setCell(dividerX, y, "│", COLORS.border, panelBg);
+    }
+    this.frameBuffer.setCell(dividerX, dividerY, "┼", COLORS.border, panelBg);
+
+    for (const [index, category] of STENCIL_BROWSER_CATEGORY_OPTIONS.entries()) {
+      const y = contentTop + index;
+      if (y >= footerY) break;
+      const isActive = category.id === this.stencilBrowser.category;
+      drawClippedText(
+        this.frameBuffer,
+        sidebarLeft + 1,
+        y,
+        Math.max(1, sidebarWidth - 1),
+        category.label,
+        isActive ? COLORS.panel : COLORS.text,
+        isActive ? COLORS.select : panelBg,
+        isActive ? TextAttributes.BOLD : TextAttributes.NONE,
+      );
+    }
+
+    if (filtered.length === 0) {
+      drawClippedText(
+        this.frameBuffer,
+        mainLeft,
+        contentTop + 1,
+        mainWidth,
+        "No stencils match the current filter.",
+        COLORS.dim,
+        panelBg,
+      );
+    }
+
+    for (let row = scrollRow; row < Math.min(totalRows, scrollRow + visibleRows); row += 1) {
+      for (let col = 0; col < columns; col += 1) {
+        const index = row * columns + col;
+        const stencil = filtered[index];
+        if (!stencil) continue;
+
+        const left = mainLeft + col * (cardWidth + STENCIL_BROWSER_CARD_GAP);
+        const top = contentTop + (row - scrollRow) * rowHeight;
+        const isSelected = index === this.stencilBrowser.selectedIndex;
+        const previewLines = renderStencilPreview(stencil, Math.max(1, cardWidth - 4), 4);
+        drawFrameBox(
+          this.frameBuffer,
+          left,
+          top,
+          cardWidth,
+          STENCIL_BROWSER_CARD_HEIGHT,
+          isSelected ? COLORS.accent : COLORS.border,
+          isSelected ? selectedBg : cardBg,
+        );
+        drawClippedText(
+          this.frameBuffer,
+          left + 1,
+          top + 1,
+          Math.max(1, cardWidth - 2),
+          stencil.name,
+          isSelected ? COLORS.accent : COLORS.text,
+          isSelected ? selectedBg : cardBg,
+          TextAttributes.BOLD,
+        );
+        for (const [previewIndex, line] of previewLines.entries()) {
+          drawClippedText(
+            this.frameBuffer,
+            left + 2,
+            top + 2 + previewIndex,
+            Math.max(1, cardWidth - 4),
+            line,
+            isSelected ? COLORS.text : COLORS.dim,
+            isSelected ? selectedBg : cardBg,
+          );
+        }
+        drawClippedText(
+          this.frameBuffer,
+          left + 1,
+          top + 6,
+          Math.max(1, cardWidth - 2),
+          truncateToCells(stencil.description, Math.max(1, cardWidth - 2)),
+          COLORS.dim,
+          isSelected ? selectedBg : cardBg,
+        );
+        drawClippedText(
+          this.frameBuffer,
+          left + 1,
+          top + 7,
+          Math.max(1, cardWidth - 2),
+          `${stencil.width}x${stencil.height} • ${stencil.category}`,
+          COLORS.dim,
+          isSelected ? selectedBg : cardBg,
+        );
+      }
+    }
+
+    const footerText =
+      selectedStencil === null
+        ? "Type to filter • Tab cycles categories • Esc closes"
+        : "↑↓←→ move • type to filter • Tab categories • Enter insert • Shift+Enter keep open • Esc close";
+    drawClippedText(this.frameBuffer, 2, footerY, this.width - 4, footerText, COLORS.dim, panelBg);
   }
 
   private dismissStartupLogo(): void {
@@ -890,7 +1310,7 @@ export class TermDrawRenderable extends FrameBufferRenderable {
   private drawFooterRow(layout: AppLayout): void {
     const text =
       this.footerTextOverride ??
-      "Right palette tools/styles/colors • select tool can marquee multiple objects • drag box corners / line endpoints to edit • Esc deselect • Ctrl+Q quit";
+      "Right palette tools/styles/colors • select tool can marquee multiple objects • drag box corners / line endpoints to edit • Ctrl+P UI stencils • Esc deselect • Ctrl+Q quit";
     const combined = `${text}  ${this.state.currentStatus}`;
     const padded = padToWidth(combined, Math.max(1, this.width - 2));
     this.frameBuffer.drawText(padded, 1, layout.footerY, COLORS.dim, COLORS.panel);
@@ -1158,6 +1578,7 @@ export function buildHelpText(binaryName = "termdraw"): string {
       `  Ctrl+Q          quit\n` +
       `  Ctrl+Z / Ctrl+Y undo / redo\n` +
       `  Ctrl+X          clear canvas\n` +
+      `  Ctrl+P          open the UI stencil browser\n` +
       `  [ / ]           cycle box style or paint/line brush\n` +
       `  mouse wheel     cycle box style or paint/line brush\n` +
       `  Space           stamp brush in paint/line mode / insert space in text mode\n` +

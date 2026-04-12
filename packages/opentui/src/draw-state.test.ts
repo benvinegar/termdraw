@@ -549,4 +549,34 @@ describe("DrawState", () => {
     state.redo();
     expect(state.getCompositeCell(4, 2)).toBe("┏");
   });
+
+  test("insertDraftObjects inserts editable stencil groups", () => {
+    const state = new DrawState(24, 12);
+
+    state.insertDraftObjects(
+      [
+        { type: "box", left: 0, top: 0, right: 8, bottom: 4, style: "light" },
+        { type: "text", x: 2, y: 2, content: "Dialog" },
+      ],
+      { statusLabel: "Dialog" },
+    );
+
+    expect(state.currentMode).toBe("select");
+    expect(state.hasSelectedObject).toBe(true);
+    expect(state.getCompositeCell(0, 0)).toBe("┌");
+    expect(state.getCompositeCell(2, 2)).toBe("D");
+  });
+
+  test("insertDraftObjects clamps inserted groups inside the canvas", () => {
+    const state = new DrawState(16, 12);
+    state.moveCursor(13, 6);
+
+    state.insertDraftObjects(
+      [{ type: "box", left: 0, top: 0, right: 5, bottom: 3, style: "light" }],
+      { statusLabel: null },
+    );
+
+    expect(state.getCompositeCell(8, 3)).toBe("┌");
+    expect(state.getCompositeCell(13, 6)).toBe("┘");
+  });
 });

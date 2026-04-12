@@ -16,7 +16,7 @@ import {
 
 const TERM_DRAW_ISLAND_MODULE_URL = new URL("../islands/termdraw.island.tsx", import.meta.url);
 const PI_FOOTER_TEXT =
-  "Right palette tools/styles/colors • select tool can marquee multiple objects • drag box corners / line endpoints to edit • Esc deselect • Enter inserts into Pi • Ctrl+Q cancels";
+  "Right palette tools/styles/colors • select tool can marquee multiple objects • drag box corners / line endpoints to edit • Ctrl+P UI stencils • Esc deselect • Enter / Ctrl+S inserts into Pi • Ctrl+Q cancels";
 const READY_STATUS = "termDRAW ready. Press Enter or Ctrl+S to insert into Pi. Ctrl+Q cancels.";
 const LOADING_STATUS = "Starting termDRAW in a Bun sidecar…";
 const INSERTED_MESSAGE = "Inserted drawing into editor.";
