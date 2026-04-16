@@ -1,4 +1,10 @@
 {
   "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@termdraw/opentui": ["../opentui/src/index.ts"]
+    }
+  },
   "include": ["src/**/*.ts", "src/**/*.tsx"]
 }

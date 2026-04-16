@@ -101,7 +101,7 @@ export async function runTermDrawAppCli(argv = Bun.argv.slice(2)): Promise<void>
       height="100%"
       autoFocus
       cancelOnCtrlC
-      onSave={(art) => {
+      onSave={(art: string) => {
         void finish(art);
       }}
       onCancel={() => {
