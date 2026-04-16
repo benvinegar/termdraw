@@ -5,6 +5,33 @@
 <h1 align="center">termDRAW!</h1>
 
 <p align="center">
+  <a href="https://github.com/benvinegar/termdraw/actions/workflows/ci.yml?query=branch%3Amain">
+    <img alt="CI status" src="https://img.shields.io/github/actions/workflow/status/benvinegar/termdraw/ci.yml?branch=main&style=for-the-badge&label=CI" />
+  </a>
+  <a href="https://github.com/benvinegar/termdraw/releases">
+    <img alt="Latest release" src="https://img.shields.io/github/v/release/benvinegar/termdraw?style=for-the-badge" />
+  </a>
+  <a href="LICENSE">
+    <img alt="MIT License" src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge" />
+  </a>
+</p>
+
+<p align="center">
+  <a href="https://www.npmjs.com/package/@termdraw/app">
+    <img alt="@termdraw/app on npm" src="https://img.shields.io/npm/v/%40termdraw%2Fapp?style=for-the-badge&logo=npm&label=app" />
+  </a>
+  <a href="https://www.npmjs.com/package/@termdraw/opentui">
+    <img alt="@termdraw/opentui on npm" src="https://img.shields.io/npm/v/%40termdraw%2Fopentui?style=for-the-badge&logo=npm&label=opentui" />
+  </a>
+  <a href="https://www.npmjs.com/package/@termdraw/pi">
+    <img alt="@termdraw/pi on npm" src="https://img.shields.io/npm/v/%40termdraw%2Fpi?style=for-the-badge&logo=npm&label=pi" />
+  </a>
+  <a href="https://bun.sh">
+    <img alt="Bun 1.3+" src="https://img.shields.io/badge/Bun-1.3%2B-black?style=for-the-badge&logo=bun" />
+  </a>
+</p>
+
+<p align="center">
   A terminal drawing editor for developers who want editable diagrams, UI mocks, and text graphics without leaving the terminal.
 </p>
 
