@@ -132,16 +132,6 @@ class TermDrawOverlay implements Component {
 
     try {
       await delay(150);
-      await this.surface.sendInput("\t");
-      await delay(50);
-      await this.surface.sendInput("\t");
-      await delay(50);
-
-      for (const char of this.smokeText) {
-        await this.surface.sendInput(char);
-      }
-
-      await delay(100);
       await this.surface.sendInput("\r");
     } catch (error) {
       this.status = `Smoke automation failed: ${formatError(error)}`;

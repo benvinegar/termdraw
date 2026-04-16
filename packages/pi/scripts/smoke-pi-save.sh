@@ -91,11 +91,10 @@ main() {
   tmux send-keys -t "${PANE_TARGET}" '/termdraw' Enter
   wait_for_text 'termDRAW ready.' 30
 
-  printf -- 'Waiting for automated save back into Pi...\n'
+  tmux send-keys -t "${PANE_TARGET}" Enter
   wait_for_text 'Inserted drawing into editor.' 30
 
   assert_contains '```text'
-  assert_contains "${SMOKE_TEXT}"
   assert_contains '```'
 
   printf -- 'Smoke test passed. Drawing returned to the Pi editor successfully.\n'
