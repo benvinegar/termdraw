@@ -86,7 +86,7 @@ type ToolButton = {
 };
 
 type StyleButton = {
-  style: BoxStyle | LineStyle;
+  style: BoxStyle | LineStyle | string;
   left: number;
   top: number;
   width: number;
@@ -113,6 +113,19 @@ const LINE_STYLE_OPTIONS: { style: LineStyle; sample: string; label: string }[] 
   { style: "light", sample: "─│", label: "Single" },
   { style: "double", sample: "═║", label: "Double" },
 ];
+
+const BRUSH_OPTIONS = [
+  { brush: "#", sample: "###", label: "Hash" },
+  { brush: "*", sample: "***", label: "Star" },
+  { brush: "+", sample: "+++", label: "Plus" },
+  { brush: "x", sample: "xxx", label: "Cross" },
+  { brush: "o", sample: "ooo", label: "Circle" },
+  { brush: ".", sample: "...", label: "Dot" },
+  { brush: "•", sample: "•••", label: "Bullet" },
+  { brush: "░", sample: "░░░", label: "Light" },
+  { brush: "▒", sample: "▒▒▒", label: "Medium" },
+  { brush: "▓", sample: "▓▓▓", label: "Heavy" },
+] as const;
 
 const INK_COLOR_VALUES: Record<InkColor, RGBA> = {
   white: RGBA.fromHex("#e2e8f0"),
@@ -361,6 +374,9 @@ export class TermDrawRenderable extends FrameBufferRenderable {
           } else if (this.state.currentMode === "line") {
             this.state.setMode("line");
             this.state.setLineStyle(styleButton.style as LineStyle);
+          } else if (this.state.currentMode === "paint") {
+            this.state.setMode("paint");
+            this.state.setBrush(styleButton.style);
           }
           this.requestRender();
         }
@@ -623,13 +639,6 @@ export class TermDrawRenderable extends FrameBufferRenderable {
         return true;
       }
 
-      if (isPrintableKey(key)) {
-        key.preventDefault();
-        this.state.setBrush(key.raw);
-        this.requestRender();
-        return true;
-      }
-
       return false;
     }
 
@@ -707,6 +716,7 @@ export class TermDrawRenderable extends FrameBufferRenderable {
   private getContextualStyleRowCount(): number {
     if (this.state.currentMode === "box") return BOX_STYLE_OPTIONS.length;
     if (this.state.currentMode === "line") return LINE_STYLE_OPTIONS.length;
+    if (this.state.currentMode === "paint") return BRUSH_OPTIONS.length;
     return 0;
   }
 
@@ -742,7 +752,12 @@ export class TermDrawRenderable extends FrameBufferRenderable {
   }
 
   private getContextualStyleButtons(layout: AppLayout): StyleButton[] {
-    if (this.state.currentMode !== "box" && this.state.currentMode !== "line") return [];
+    if (
+      this.state.currentMode !== "box" &&
+      this.state.currentMode !== "line" &&
+      this.state.currentMode !== "paint"
+    )
+      return [];
 
     const buttonLeft = this.getPaletteButtonLeft(layout);
     const activeButton = this.getToolButtons(layout).find(
@@ -750,7 +765,16 @@ export class TermDrawRenderable extends FrameBufferRenderable {
     );
     if (!activeButton) return [];
 
-    const options = this.state.currentMode === "box" ? BOX_STYLE_OPTIONS : LINE_STYLE_OPTIONS;
+    const options =
+      this.state.currentMode === "box"
+        ? BOX_STYLE_OPTIONS
+        : this.state.currentMode === "line"
+          ? LINE_STYLE_OPTIONS
+          : BRUSH_OPTIONS.map((option) => ({
+              style: option.brush,
+              sample: option.sample,
+              label: option.label,
+            }));
     return options.map((option, index) => ({
       style: option.style,
       left: buttonLeft,
@@ -873,12 +897,13 @@ export class TermDrawRenderable extends FrameBufferRenderable {
     );
 
     if (this.state.currentMode === "paint") {
+      const brush = BRUSH_OPTIONS.find((option) => option.brush === this.state.currentBrush);
       x = drawSegment(this.frameBuffer, x, y, "  brush:", COLORS.dim, COLORS.panel);
       x = drawSegment(
         this.frameBuffer,
         x,
         y,
-        `"${this.state.currentBrush}"`,
+        brush ? `${brush.sample} ${brush.label}` : `"${this.state.currentBrush}"`,
         COLORS.paint,
         COLORS.panel,
       );
@@ -1018,7 +1043,9 @@ export class TermDrawRenderable extends FrameBufferRenderable {
     const isActive =
       this.state.currentMode === "box"
         ? this.state.currentBoxStyle === button.style
-        : this.state.currentLineStyle === button.style;
+        : this.state.currentMode === "line"
+          ? this.state.currentLineStyle === button.style
+          : this.state.currentBrush === button.style;
     const fg = isActive ? COLORS.panel : COLORS.text;
     const bg = isActive ? COLORS.warning : COLORS.panel;
     const text = padToWidth(`${button.sample} ${button.label}`, button.width);
@@ -1218,6 +1245,7 @@ export function buildHelpText(binaryName = "termdraw"): string {
       `  Ctrl+X          clear canvas\n` +
       `  [ / ]           cycle box style in Box mode, line style in Line mode, or brush in Brush mode\n` +
       `  mouse wheel     cycle box style in Box mode, line style in Line mode, or brush in Brush mode\n` +
+      `  brush tool      choose from preset brush stencils in the palette\n` +
       `  Space           stamp a line point or current brush / insert space in Text mode\n` +
       `  Enter / Ctrl+S  save\n\n` +
       `Options:\n` +

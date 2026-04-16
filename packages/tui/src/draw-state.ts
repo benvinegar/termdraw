@@ -1,6 +1,6 @@
 import { MouseButton } from "@opentui/core";
 
-export const BRUSHES = ["#", "*", "+", "-", "=", "x", "o", ".", "|", "/", "\\"] as const;
+export const BRUSHES = ["#", "*", "+", "x", "o", ".", "•", "░", "▒", "▓"] as const;
 export const BOX_STYLES = ["auto", "light", "heavy", "double"] as const;
 export const LINE_STYLES = ["smooth", "light", "double"] as const;
 export const INK_COLORS = [

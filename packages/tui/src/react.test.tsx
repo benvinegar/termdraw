@@ -82,7 +82,7 @@ test("TermDrawApp supports common graphics-app tool hotkeys", async () => {
   expect(captureCharFrame()).toContain("TEXT");
 });
 
-test("TermDrawApp shows line and box styles contextually", async () => {
+test("TermDrawApp shows line, box, and brush styles contextually", async () => {
   const { captureCharFrame, mockInput, renderOnce } = await testRender(
     <TermDrawApp width="100%" height="100%" autoFocus showStartupLogo={false} />,
     {
@@ -106,6 +106,13 @@ test("TermDrawApp shows line and box styles contextually", async () => {
   expect(frame).toContain("Single");
   expect(frame).toContain("Double");
   expect(frame).toContain("Heavy");
+
+  mockInput.pressKey("b");
+  await renderOnce();
+  frame = captureCharFrame();
+  expect(frame).toContain("Hash");
+  expect(frame).toContain("Bullet");
+  expect(frame).toContain("Heavy");
 });
 
 test("help text documents tool hotkeys and automatic line rendering", () => {
@@ -113,6 +120,7 @@ test("help text documents tool hotkeys and automatic line rendering", () => {
   expect(help).toContain("Select / Box / Line / Brush / Text");
   expect(help).toContain("B / A / U / P / T");
   expect(help).toContain("choose Smooth (Braille-aware), Single, or Double line stencils");
+  expect(help).toContain("choose from preset brush stencils in the palette");
   expect(help).toContain(
     "Shift + drag    constrain line creation/editing to horizontal or vertical",
   );
