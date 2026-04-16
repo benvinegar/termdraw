@@ -1,6 +1,12 @@
-# termDRAW!
+<p align="center">
+  <img src="./logo.webp" alt="termDRAW logo" width="420" />
+</p>
 
-termDRAW! is a terminal drawing editor for developers who want editable diagrams, UI mocks, and text graphics without leaving the terminal.
+<h1 align="center">termDRAW!</h1>
+
+<p align="center">
+  A terminal drawing editor for developers who want editable diagrams, UI mocks, and text graphics without leaving the terminal.
+</p>
 
 ## Packages
 
