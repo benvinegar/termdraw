@@ -1,6 +1,6 @@
 {
   "name": "@termdraw/pi",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "description": "Pi extension package that embeds termDRAW inside Pi via opentui-island.",
   "keywords": [
     "drawing",
