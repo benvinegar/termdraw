@@ -440,27 +440,28 @@ const BRAILLE_Y_OFFSETS = [0.125, 0.375, 0.625, 0.875] as const;
 const BRAILLE_LINE_THRESHOLD = 0.22;
 
 function getLineCharacter(start: Point, end: Point, style: LineStyle = "smooth"): string {
-  if (style === "light") {
-    const dx = end.x - start.x;
-    const dy = end.y - start.y;
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const absDx = Math.abs(dx);
+  const absDy = Math.abs(dy);
 
+  if (style === "light") {
     if (dx === 0 && dy === 0) return "•";
     if (dx === 0) return "│";
     if (dy === 0) return "─";
+    if (absDx >= absDy * 2) return "─";
+    if (absDy >= absDx * 2) return "│";
     return Math.sign(dx) === Math.sign(dy) ? "╲" : "╱";
   }
 
   if (style === "double") {
-    const dx = end.x - start.x;
-    const dy = end.y - start.y;
-
     if (dx === 0 && dy === 0) return "•";
     if (dx === 0) return "║";
     if (dy === 0) return "═";
+    if (absDx >= absDy * 2) return "═";
+    if (absDy >= absDx * 2) return "║";
     return Math.sign(dx) === Math.sign(dy) ? "╲" : "╱";
   }
-  const dx = end.x - start.x;
-  const dy = end.y - start.y;
 
   if (dx === 0 && dy === 0) return "•";
   if (dx === 0) return "│";

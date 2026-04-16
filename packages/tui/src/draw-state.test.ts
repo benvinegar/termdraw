@@ -185,8 +185,8 @@ describe("DrawState", () => {
     expect(state.getCompositeCell(2, 1)).toBe("┌");
   });
 
-  test("line styles can draw smooth, single, and double borders", () => {
-    const state = new DrawState(30, 12);
+  test("line styles choose the closest single or double stencil by angle", () => {
+    const state = new DrawState(40, 16);
 
     const smoothStart = canvasPoint(state, 0, 0);
     const smoothEnd = canvasPoint(state, 6, 2);
@@ -197,23 +197,85 @@ describe("DrawState", () => {
     expect((smoothChar.codePointAt(0) ?? 0) >= 0x2800).toBe(true);
 
     state.setLineStyle("light");
-    const lightStart = canvasPoint(state, 8, 0);
-    const lightEnd = canvasPoint(state, 12, 0);
-    state.handlePointerEvent({ type: "down", button: MouseButton.LEFT, ...lightStart });
-    state.handlePointerEvent({ type: "drag", button: MouseButton.LEFT, ...lightEnd });
-    state.handlePointerEvent({ type: "up", button: MouseButton.LEFT, ...lightEnd });
+    const mostlyHorizontalSingleStart = canvasPoint(state, 8, 0);
+    const mostlyHorizontalSingleEnd = canvasPoint(state, 18, 3);
+    state.handlePointerEvent({
+      type: "down",
+      button: MouseButton.LEFT,
+      ...mostlyHorizontalSingleStart,
+    });
+    state.handlePointerEvent({
+      type: "drag",
+      button: MouseButton.LEFT,
+      ...mostlyHorizontalSingleEnd,
+    });
+    state.handlePointerEvent({
+      type: "up",
+      button: MouseButton.LEFT,
+      ...mostlyHorizontalSingleEnd,
+    });
+    expect(state.getCompositeCell(8, 0)).toBe("─");
+    expect(state.getCompositeCell(12, 1)).toBe("─");
+
+    const mostlyVerticalSingleStart = canvasPoint(state, 22, 0);
+    const mostlyVerticalSingleEnd = canvasPoint(state, 24, 8);
+    state.handlePointerEvent({
+      type: "down",
+      button: MouseButton.LEFT,
+      ...mostlyVerticalSingleStart,
+    });
+    state.handlePointerEvent({
+      type: "drag",
+      button: MouseButton.LEFT,
+      ...mostlyVerticalSingleEnd,
+    });
+    state.handlePointerEvent({ type: "up", button: MouseButton.LEFT, ...mostlyVerticalSingleEnd });
+    expect(state.getCompositeCell(22, 0)).toBe("│");
+    expect(state.getCompositeCell(23, 4)).toBe("│");
+
+    const diagonalSingleStart = canvasPoint(state, 28, 0);
+    const diagonalSingleEnd = canvasPoint(state, 31, 3);
+    state.handlePointerEvent({ type: "down", button: MouseButton.LEFT, ...diagonalSingleStart });
+    state.handlePointerEvent({ type: "drag", button: MouseButton.LEFT, ...diagonalSingleEnd });
+    state.handlePointerEvent({ type: "up", button: MouseButton.LEFT, ...diagonalSingleEnd });
+    expect(state.getCompositeCell(28, 0)).toBe("╲");
 
     state.setLineStyle("double");
-    const doubleStart = canvasPoint(state, 14, 0);
-    const doubleEnd = canvasPoint(state, 18, 0);
-    state.handlePointerEvent({ type: "down", button: MouseButton.LEFT, ...doubleStart });
-    state.handlePointerEvent({ type: "drag", button: MouseButton.LEFT, ...doubleEnd });
-    state.handlePointerEvent({ type: "up", button: MouseButton.LEFT, ...doubleEnd });
+    const mostlyHorizontalDoubleStart = canvasPoint(state, 0, 6);
+    const mostlyHorizontalDoubleEnd = canvasPoint(state, 10, 9);
+    state.handlePointerEvent({
+      type: "down",
+      button: MouseButton.LEFT,
+      ...mostlyHorizontalDoubleStart,
+    });
+    state.handlePointerEvent({
+      type: "drag",
+      button: MouseButton.LEFT,
+      ...mostlyHorizontalDoubleEnd,
+    });
+    state.handlePointerEvent({
+      type: "up",
+      button: MouseButton.LEFT,
+      ...mostlyHorizontalDoubleEnd,
+    });
+    expect(state.getCompositeCell(0, 6)).toBe("═");
+    expect(state.getCompositeCell(4, 7)).toBe("═");
 
-    expect(state.getCompositeCell(8, 0)).toBe("─");
-    expect(state.getCompositeCell(12, 0)).toBe("─");
-    expect(state.getCompositeCell(14, 0)).toBe("═");
-    expect(state.getCompositeCell(18, 0)).toBe("═");
+    const mostlyVerticalDoubleStart = canvasPoint(state, 14, 6);
+    const mostlyVerticalDoubleEnd = canvasPoint(state, 15, 14);
+    state.handlePointerEvent({
+      type: "down",
+      button: MouseButton.LEFT,
+      ...mostlyVerticalDoubleStart,
+    });
+    state.handlePointerEvent({
+      type: "drag",
+      button: MouseButton.LEFT,
+      ...mostlyVerticalDoubleEnd,
+    });
+    state.handlePointerEvent({ type: "up", button: MouseButton.LEFT, ...mostlyVerticalDoubleEnd });
+    expect(state.getCompositeCell(14, 6)).toBe("║");
+    expect(state.getCompositeCell(15, 10)).toBe("║");
   });
 
   test("box styles can draw single and double borders", () => {
