@@ -4,18 +4,20 @@
 
 termDRAW is a Bun-based TypeScript workspace for terminal-native diagramming.
 
-- `packages/tui` contains the published `@benvinegar/termdraw` OpenTUI library and CLI.
-- `packages/pi` contains the Pi embedding prototype that mounts termDRAW through `opentui-island`.
-- The repo root provides shared workspace scripts for formatting, linting, testing, typechecking, building, and Pi smoke coverage.
+- `packages/opentui` contains the published `@termdraw/opentui` embeddable OpenTUI library.
+- `packages/app` contains the published `@termdraw/app` standalone CLI.
+- `packages/pi` contains the published `@termdraw/pi` Pi integration package that mounts termDRAW through `opentui-island`.
+- The repo root provides shared workspace scripts for formatting, linting, testing, typechecking, build checks, packaging checks, and Pi smoke coverage.
 
 ## Important file entry points
 
 - `package.json` — workspace scripts and maintenance commands
 - `tsconfig.json` — shared TypeScript defaults for the workspace
-- `packages/tui/src/draw-state.ts` — retained object model, selection, transforms, undo/redo, export
-- `packages/tui/src/app.ts` — renderable chrome/editor surface and input handling
-- `packages/tui/src/react.ts` — OpenTUI React component bindings
-- `packages/tui/src/cli.tsx` — standalone CLI entrypoint
+- `packages/opentui/src/draw-state.ts` — retained object model, selection, transforms, undo/redo, export
+- `packages/opentui/src/app.ts` — renderable chrome/editor surface and input handling
+- `packages/opentui/src/react.ts` — OpenTUI React component bindings
+- `packages/app/src/main.tsx` — standalone CLI runtime entrypoint
+- `packages/app/src/cli.tsx` — Bun executable wrapper for the standalone app
 - `packages/pi/extensions/overlay.ts` — Pi `/termdraw` command and editor insertion flow
 - `packages/pi/islands/termdraw.island.tsx` — Pi island bridge component
 - `.github/workflows/*` — CI and publishing automation
@@ -45,9 +47,9 @@ termDRAW is a Bun-based TypeScript workspace for terminal-native diagramming.
   - `Bun.sql` instead of `pg` or `postgres.js`
   - built-in `WebSocket` instead of `ws`
   - `Bun.file` instead of `fs.readFile`/`writeFile` when practical
-- Keep the workspace split intact: reusable editor behavior belongs in `packages/tui`, while Pi-specific integration logic belongs in `packages/pi`.
+- Keep the workspace split intact: reusable editor behavior belongs in `packages/opentui`, the standalone CLI belongs in `packages/app`, and Pi-specific integration logic belongs in `packages/pi`.
 - Prefer targeted changes over broad rewrites.
-- When changing editor behavior, add or update tests in `packages/tui`.
+- When changing editor behavior, add or update tests in `packages/opentui`.
 - Run the Pi smoke flow when modifying Pi embed behavior, save messaging, or bridge wiring.
 
 ## Validation commands
