@@ -113,6 +113,7 @@ class TermDrawOverlay implements Component {
         height: this.surfaceHeight,
       });
       await this.surface.sync(this.width);
+      await this.surface.waitUntilReady();
       this.status = READY_STATUS;
       if (this.smokeText.length > 0) {
         void this.runSmokeAutomation();
