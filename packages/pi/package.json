@@ -1,6 +1,6 @@
 {
   "name": "@termdraw/pi",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Pi extension package that embeds termDRAW inside Pi via opentui-island.",
   "keywords": [
     "drawing",
@@ -38,7 +38,7 @@
   "dependencies": {
     "@opentui/core": "^0.1.97",
     "@opentui/react": "^0.1.97",
-    "@termdraw/opentui": "0.3.1",
+    "@termdraw/opentui": "0.3.3",
     "opentui-island": "^0.4.0",
     "react": "^19.2.0"
   },

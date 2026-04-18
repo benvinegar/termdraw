@@ -1,6 +1,6 @@
 {
   "name": "@termdraw/app",
-  "version": "0.3.1",
+  "version": "0.3.3",
   "description": "Standalone termDRAW terminal drawing app.",
   "keywords": [
     "ascii-art",
@@ -62,7 +62,7 @@
   "dependencies": {
     "@opentui/core": "^0.1.97",
     "@opentui/react": "^0.1.97",
-    "@termdraw/opentui": "0.3.1",
+    "@termdraw/opentui": "0.3.3",
     "react": "^19.2.5"
   },
   "devDependencies": {

@@ -8,9 +8,23 @@ All notable user-visible changes to this project are documented in this file.
 
 ### Changed
 
+### Fixed
+
+## [0.3.3]
+
+### Added
+
+### Changed
+
 - Renamed the Paint tool to Brush in the UI, added single-key tool hotkeys (`B` Brush, `A` Select, `U` Box, `P` Line, `T` Text), and made the Line tool render clean line glyphs automatically, including sub-cell Braille for shallow or steep angles.
+- Split the published surface into dedicated `@termdraw/app`, `@termdraw/opentui`, and `@termdraw/pi` packages.
+- Refreshed the README to better surface npm CLI usage, Pi usage, and package layout.
 
 ### Fixed
+
+- Improved Pi embedding and save flow stability, including smoke coverage and relaxed host peer requirements.
+- Improved line drawing behavior with shift-constrained lines, selectable stencils, and better angle matching.
+- Added text border modes, explicit text entry activation, and curated brush presets.
 
 ## [0.3.0]
 
