@@ -10,6 +10,6 @@
     "rootDir": "./src",
     "allowImportingTsExtensions": false
   },
-  "include": ["src/app.ts", "src/draw-state.ts", "src/index.ts", "src/react.ts"],
+  "include": ["src/**/*.ts", "src/**/*.tsx"],
   "exclude": ["**/*.test.ts", "**/*.test.tsx"]
 }
