@@ -1,239 +1,32 @@
+/**
+ * Public entry point for the termDRAW renderables.
+ *
+ * This file keeps the exported renderable classes and user-facing helpers in one place while
+ * delegating layout, rendering, startup-logo, and input details to smaller internal modules in
+ * `src/app/`.
+ */
 import {
   FrameBufferRenderable,
-  MouseButton,
-  RGBA,
-  TextAttributes,
   type KeyEvent,
   type MouseEvent,
   type OptimizedBuffer,
   type RenderContext,
   type RenderableOptions,
 } from "@opentui/core";
+import { DrawState, INK_COLORS, truncateToCells } from "./draw-state.js";
 import {
-  DrawState,
-  INK_COLORS,
-  padToWidth,
-  truncateToCells,
-  visibleCellCount,
-  type BoxStyle,
-  type CanvasInsets,
-  type DrawMode,
-  type InkColor,
-  type LineStyle,
-  type PointerEventLike,
-  type TextBorderMode,
-} from "./draw-state.js";
+  getColorSwatches,
+  getContextualStyleButtons,
+  getLayout,
+  getToolButtons,
+} from "./app/layout.js";
+import { handleKeyPress, handleMouseEvent } from "./app/input.js";
+import { drawCanvas, drawChrome, drawTooSmallMessage, drawToolPalette } from "./app/render.js";
+import { renderStartupLogo } from "./app/startup-logo.js";
+import { COLORS, MIN_HEIGHT, MIN_WIDTH, getCanvasInsets } from "./app/theme.js";
+import type { AppLayout, ChromeMode } from "./app/types.js";
 
-const MIN_WIDTH = 45;
-const MIN_HEIGHT = 27;
-const TOOL_PALETTE_WIDTH = 20;
-const TOOL_BUTTON_WIDTH = 13;
-const STYLE_BUTTON_WIDTH = 16;
-const TOOL_BUTTON_HEIGHT = 3;
-const COLOR_SWATCH_WIDTH = 3;
-const COLOR_SWATCH_COLUMNS = 4;
-
-const COLORS = {
-  background: RGBA.fromHex("#0f172a"),
-  panel: RGBA.fromHex("#0f172a"),
-  border: RGBA.fromHex("#475569"),
-  text: RGBA.fromHex("#e2e8f0"),
-  dim: RGBA.fromHex("#94a3b8"),
-  select: RGBA.fromHex("#38bdf8"),
-  accent: RGBA.fromHex("#22d3ee"),
-  warning: RGBA.fromHex("#f59e0b"),
-  success: RGBA.fromHex("#22c55e"),
-  paint: RGBA.fromHex("#a855f7"),
-  preview: RGBA.fromHex("#64748b"),
-  selectionFg: RGBA.fromHex("#f8fafc"),
-  selectionBg: RGBA.fromHex("#0ea5e9"),
-  handleFg: RGBA.fromHex("#f59e0b"),
-  handleBg: RGBA.fromHex("#0f172a"),
-  cursorFg: RGBA.fromHex("#0f172a"),
-  cursorBg: RGBA.fromHex("#f8fafc"),
-};
-
-const STARTUP_LOGO_LINES = [
-  "  `::                              :::::::-.  :::::::..    :::.  .::    .   .:::.:",
-  "   ;;                               ;;,   `';,;;;;``;;;;   ;;`;; ';;,  ;;  ;;;';;;",
-  "=[[[[[[.,cc[[[cc.=,,[[==[ccc, ,cccc,`[[     [[ [[[,/[[['  ,[[ '[[,'[[, [[, [[' '[[",
-  '   $$   $$$___--\'`$$$"``$$$$$$$$"$$$ $$,    $$ $$$$$$c   c$$$cc$$$c Y$c$$$c$P   $$',
-  '   88,  88b    ,o,888   888 Y88" 888o888_,o8P\' 888b "88bo,888   888  "88"888    ""',
-  '   MMM   "YUMMMMP""MM,  MMM  M\'  "MMMMMMP"`   MMMM   "W" YMM   ""` "M "M"    MM',
-] as const;
-const STARTUP_LOGO_CAPTION = "(c) 2026 Ben Vinegar  ·  Licensed under MIT";
-
-type ChromeMode = "full" | "editor";
-
-type AppLayout = {
-  dividerX: number;
-  paletteLeft: number;
-  paletteWidth: number;
-  bodyTop: number;
-  bodyBottom: number;
-  footerY: number;
-  canvasViewWidth: number;
-};
-
-type ToolButton = {
-  mode: DrawMode;
-  left: number;
-  top: number;
-  width: number;
-  height: number;
-  icon: string;
-  label: string;
-  color: RGBA;
-};
-
-type StyleButton = {
-  style: BoxStyle | LineStyle | string;
-  left: number;
-  top: number;
-  width: number;
-  sample: string;
-  label: string;
-};
-
-type ColorSwatch = {
-  color: InkColor;
-  left: number;
-  top: number;
-  width: number;
-};
-
-const BOX_STYLE_OPTIONS: { style: BoxStyle; sample: string; label: string }[] = [
-  { style: "auto", sample: "▣", label: "Auto" },
-  { style: "light", sample: "┌─┐", label: "Single" },
-  { style: "heavy", sample: "┏━┓", label: "Heavy" },
-  { style: "double", sample: "╔═╗", label: "Double" },
-];
-
-const LINE_STYLE_OPTIONS: { style: LineStyle; sample: string; label: string }[] = [
-  { style: "smooth", sample: "⠉⠒", label: "Smooth" },
-  { style: "light", sample: "─│", label: "Single" },
-  { style: "double", sample: "═║", label: "Double" },
-];
-
-const BRUSH_OPTIONS = [
-  { brush: "#", sample: "###", label: "Hash" },
-  { brush: "*", sample: "***", label: "Star" },
-  { brush: "+", sample: "+++", label: "Plus" },
-  { brush: "x", sample: "xxx", label: "Cross" },
-  { brush: "o", sample: "ooo", label: "Circle" },
-  { brush: ".", sample: "...", label: "Dot" },
-  { brush: "•", sample: "•••", label: "Bullet" },
-  { brush: "░", sample: "░░░", label: "Light" },
-  { brush: "▒", sample: "▒▒▒", label: "Medium" },
-  { brush: "▓", sample: "▓▓▓", label: "Heavy" },
-] as const;
-
-const TEXT_BORDER_OPTIONS: { style: TextBorderMode; sample: string; label: string }[] = [
-  { style: "none", sample: "abc", label: "No border" },
-  { style: "single", sample: "┌─┐", label: "Single" },
-  { style: "double", sample: "╔═╗", label: "Double" },
-  { style: "underline", sample: "___", label: "Underline" },
-];
-
-const INK_COLOR_VALUES: Record<InkColor, RGBA> = {
-  white: RGBA.fromHex("#e2e8f0"),
-  red: RGBA.fromHex("#ef4444"),
-  orange: RGBA.fromHex("#f97316"),
-  yellow: RGBA.fromHex("#eab308"),
-  green: RGBA.fromHex("#22c55e"),
-  cyan: RGBA.fromHex("#06b6d4"),
-  blue: RGBA.fromHex("#3b82f6"),
-  magenta: RGBA.fromHex("#d946ef"),
-};
-
-const TOOL_HOTKEYS: Partial<Record<string, DrawMode>> = {
-  a: "select",
-  b: "paint",
-  p: "line",
-  t: "text",
-  u: "box",
-};
-
-function isPrintableKey(key: KeyEvent): boolean {
-  if (key.ctrl || key.meta || key.option) return false;
-  if (!key.raw || key.raw.startsWith("\u001b")) return false;
-  if (key.name === "space") return false;
-  return visibleCellCount(key.raw) === 1;
-}
-
-function drawSegment(
-  buffer: OptimizedBuffer,
-  x: number,
-  y: number,
-  text: string,
-  fg: RGBA,
-  bg: RGBA,
-  attributes = TextAttributes.NONE,
-): number {
-  if (text.length === 0) return x;
-  buffer.drawText(text, x, y, fg, bg, attributes);
-  return x + visibleCellCount(text);
-}
-
-function mixColor(a: RGBA, b: RGBA, t: number): RGBA {
-  const [ar, ag, ab, aa] = a.toInts();
-  const [br, bg, bb, ba] = b.toInts();
-  const mix = (left: number, right: number) => Math.round(left + (right - left) * t);
-  return RGBA.fromInts(mix(ar, br), mix(ag, bg), mix(ab, bb), mix(aa, ba));
-}
-
-function getStartupLogoColor(rowIndex: number, colIndex: number, lineWidth: number): RGBA {
-  const verticalT = STARTUP_LOGO_LINES.length <= 1 ? 0 : rowIndex / (STARTUP_LOGO_LINES.length - 1);
-  const verticalColor =
-    verticalT <= 0.55
-      ? mixColor(COLORS.dim, COLORS.accent, verticalT / 0.55)
-      : mixColor(COLORS.accent, COLORS.warning, (verticalT - 0.55) / 0.45);
-  const horizontalT = lineWidth <= 1 ? 0 : colIndex / (lineWidth - 1);
-  const highlightStrength = 0.1 + 0.16 * Math.sin(horizontalT * Math.PI);
-  return mixColor(verticalColor, COLORS.text, highlightStrength);
-}
-
-function getStartupLogoCaptionColor(): RGBA {
-  return mixColor(COLORS.border, COLORS.text, 0.3);
-}
-
-function getInkColorValue(color: InkColor): RGBA {
-  return INK_COLOR_VALUES[color];
-}
-
-function getInkColorContrast(color: InkColor): RGBA {
-  return color === "white" || color === "yellow" ? COLORS.panel : COLORS.text;
-}
-
-function isInsideRect(
-  x: number,
-  y: number,
-  left: number,
-  top: number,
-  width: number,
-  height: number,
-) {
-  return x >= left && x < left + width && y >= top && y < top + height;
-}
-
-const FULL_CHROME_CANVAS_INSETS: CanvasInsets = {
-  left: 1,
-  top: 3,
-  right: 1,
-  bottom: 2,
-};
-
-const EDITOR_CANVAS_INSETS: CanvasInsets = {
-  left: 0,
-  top: 0,
-  right: 0,
-  bottom: 0,
-};
-
-function getCanvasInsets(chromeMode: ChromeMode): CanvasInsets {
-  return chromeMode === "full" ? FULL_CHROME_CANVAS_INSETS : EDITOR_CANVAS_INSETS;
-}
-
+/** Configures the shared termDRAW frame-buffer renderable. */
 export interface TermDrawRenderableOptions extends RenderableOptions<FrameBufferRenderable> {
   width?: number | "auto" | `${number}%`;
   height?: number | "auto" | `${number}%`;
@@ -247,6 +40,12 @@ export interface TermDrawRenderableOptions extends RenderableOptions<FrameBuffer
   chromeMode?: ChromeMode;
 }
 
+/**
+ * Coordinates the retained draw state with frame-buffer rendering and input handling.
+ *
+ * The class owns lifecycle, callbacks, and canvas sizing while delegating chrome layout,
+ * rendering, and key/mouse dispatch to smaller helper modules.
+ */
 export class TermDrawRenderable extends FrameBufferRenderable {
   private readonly state: DrawState;
   private readonly chromeMode: ChromeMode;
@@ -258,6 +57,7 @@ export class TermDrawRenderable extends FrameBufferRenderable {
   private cancelOnCtrlCEnabled = false;
   private footerTextOverride: string | null = null;
 
+  /** Creates a new termDRAW renderable using either the full chrome or editor-only mode. */
   constructor(ctx: RenderContext, options: TermDrawRenderableOptions = {}) {
     const {
       width,
@@ -301,14 +101,17 @@ export class TermDrawRenderable extends FrameBufferRenderable {
     this.syncCanvasLayout();
   }
 
+  /** Sets the callback invoked when the user saves the current drawing. */
   public set onSave(handler: ((art: string) => void) | undefined) {
     this.onSaveCallback = handler ?? null;
   }
 
+  /** Sets the callback invoked when the user cancels out of the editor. */
   public set onCancel(handler: (() => void) | undefined) {
     this.onCancelCallback = handler ?? null;
   }
 
+  /** Enables or disables automatic focus after construction. */
   public set autoFocus(value: boolean | undefined) {
     this.autoFocusEnabled = value ?? false;
 
@@ -320,6 +123,7 @@ export class TermDrawRenderable extends FrameBufferRenderable {
     });
   }
 
+  /** Controls whether the startup logo overlay can be shown. */
   public set showStartupLogo(value: boolean | undefined) {
     this.startupLogoEnabled = value ?? true;
     if (!this.startupLogoEnabled) {
@@ -328,923 +132,147 @@ export class TermDrawRenderable extends FrameBufferRenderable {
     this.requestRender();
   }
 
+  /** Controls whether Ctrl+C cancels the editor in addition to Ctrl+Q. */
   public set cancelOnCtrlC(value: boolean | undefined) {
     this.cancelOnCtrlCEnabled = value ?? false;
   }
 
+  /** Overrides the footer help text shown in the full-chrome renderable. */
   public set footerText(value: string | undefined) {
     this.footerTextOverride = value?.trim() ? value : null;
     this.requestRender();
   }
 
+  /** Exports the current drawing as plain text art. */
   public exportArt(): string {
     return this.state.exportArt();
   }
 
+  /** Resizes the retained canvas whenever the outer renderable changes size. */
   protected override onResize(width: number, height: number): void {
     super.onResize(width, height);
     this.syncCanvasLayout();
   }
 
+  /** Dispatches mouse interaction to chrome hit targets or the draw-state pointer handler. */
   protected override onMouseEvent(event: MouseEvent): void {
     const layout = this.syncCanvasLayout();
     const x = event.x - this.x;
     const y = event.y - this.y;
 
-    if (event.type !== "move" && event.type !== "over" && event.type !== "out") {
-      this.dismissStartupLogo();
-    }
-
-    if (this.chromeMode === "full" && layout && !this.state.hasActivePointerInteraction) {
-      const toolButton = this.getToolButtons(layout).find((button) =>
-        isInsideRect(x, y, button.left, button.top, button.width, button.height),
-      );
-
-      if (toolButton) {
-        if (event.type === "down" && event.button === MouseButton.LEFT) {
-          this.state.setMode(toolButton.mode);
-          this.requestRender();
-        }
-        event.preventDefault();
-        event.stopPropagation();
-        return;
-      }
-
-      const styleButton = this.getContextualStyleButtons(layout).find((button) =>
-        isInsideRect(x, y, button.left, button.top, button.width, 1),
-      );
-
-      if (styleButton) {
-        if (event.type === "down" && event.button === MouseButton.LEFT) {
-          if (this.state.currentMode === "box") {
-            this.state.setMode("box");
-            this.state.setBoxStyle(styleButton.style as BoxStyle);
-          } else if (this.state.currentMode === "line") {
-            this.state.setMode("line");
-            this.state.setLineStyle(styleButton.style as LineStyle);
-          } else if (this.state.currentMode === "paint") {
-            this.state.setMode("paint");
-            this.state.setBrush(styleButton.style);
-          } else if (this.state.currentMode === "text") {
-            this.state.setMode("text");
-            this.state.setTextBorderMode(styleButton.style as TextBorderMode);
-          }
-          this.requestRender();
-        }
-        event.preventDefault();
-        event.stopPropagation();
-        return;
-      }
-
-      const colorSwatch = this.getColorSwatches(layout).find((swatch) =>
-        isInsideRect(x, y, swatch.left, swatch.top, swatch.width, 1),
-      );
-
-      if (colorSwatch) {
-        if (event.type === "down" && event.button === MouseButton.LEFT) {
-          this.state.setInkColor(colorSwatch.color);
-          this.requestRender();
-        }
-        event.preventDefault();
-        event.stopPropagation();
-        return;
-      }
-
-      if (!this.isCanvasChromeEvent(x, y, layout)) {
-        event.preventDefault();
-        event.stopPropagation();
-        return;
-      }
-    }
-
-    const translated: PointerEventLike = {
-      type: event.type,
-      button: event.button,
+    handleMouseEvent({
+      event,
       x,
       y,
-      scrollDirection: event.scroll?.direction,
-      shift: event.modifiers.shift,
-    };
-
-    this.state.handlePointerEvent(translated);
-    this.requestRender();
-    event.preventDefault();
-    event.stopPropagation();
+      state: this.state,
+      chromeMode: this.chromeMode,
+      layout,
+      requestRender: () => this.requestRender(),
+      dismissStartupLogo: () => this.dismissStartupLogo(),
+    });
   }
 
+  /** Draws either the full app chrome or the editor-only surface into the frame buffer. */
   protected override renderSelf(buffer: OptimizedBuffer): void {
     const layout = this.syncCanvasLayout();
     this.frameBuffer.clear(COLORS.panel);
 
     if (this.chromeMode === "full") {
       if (this.width < MIN_WIDTH || this.height < MIN_HEIGHT) {
-        this.drawTooSmallMessage();
+        drawTooSmallMessage(this.frameBuffer, this.width, this.height);
         super.renderSelf(buffer);
         return;
       }
 
-      this.drawChrome(layout!);
-      this.drawToolPalette(layout!);
+      const fullLayout = layout!;
+      const toolButtons = getToolButtons(fullLayout, this.state.currentMode);
+      const styleButtons = getContextualStyleButtons(fullLayout, this.state.currentMode);
+      const colorSwatches = getColorSwatches(fullLayout, INK_COLORS);
+
+      drawChrome(
+        this.frameBuffer,
+        this.width,
+        this.height,
+        this.state,
+        fullLayout,
+        this.footerTextOverride,
+      );
+      drawToolPalette(
+        this.frameBuffer,
+        this.state,
+        fullLayout,
+        toolButtons,
+        styleButtons,
+        colorSwatches,
+      );
     }
 
-    this.drawCanvas();
-    this.drawStartupLogo(layout);
+    drawCanvas(this.frameBuffer, this.state);
+    renderStartupLogo(
+      this.frameBuffer,
+      this.state,
+      this.chromeMode,
+      layout,
+      this.startupLogoEnabled,
+      this.startupLogoDismissed,
+    );
     super.renderSelf(buffer);
   }
 
+  /** Dispatches keyboard shortcuts, cursor movement, and text entry. */
   public override handleKeyPress(key: KeyEvent): boolean {
-    const name = key.name.toLowerCase();
-
-    this.dismissStartupLogo();
-
-    if ((this.cancelOnCtrlCEnabled && key.ctrl && name === "c") || (key.ctrl && name === "q")) {
-      key.preventDefault();
-      this.onCancelCallback?.();
-      return true;
-    }
-
-    if (name === "escape") {
-      key.preventDefault();
-      this.state.clearSelection();
-      this.requestRender();
-      return true;
-    }
-
-    if (name === "enter" || name === "return" || (key.ctrl && name === "s")) {
-      key.preventDefault();
-      this.onSaveCallback?.(this.state.exportArt());
-      return true;
-    }
-
-    if (name === "tab" || (key.ctrl && name === "t")) {
-      key.preventDefault();
-      this.state.cycleMode();
-      this.requestRender();
-      return true;
-    }
-
-    const toolHotkeyMode =
-      (this.state.currentMode === "text" && this.state.isTextEntryArmed) ||
-      key.ctrl ||
-      key.meta ||
-      key.option
-        ? null
-        : (TOOL_HOTKEYS[name] ?? null);
-    if (toolHotkeyMode) {
-      key.preventDefault();
-      this.state.setMode(toolHotkeyMode);
-      this.requestRender();
-      return true;
-    }
-
-    if (key.ctrl && !key.shift && name === "z") {
-      key.preventDefault();
-      this.state.undo();
-      this.requestRender();
-      return true;
-    }
-
-    if ((key.ctrl && name === "y") || (key.ctrl && key.shift && name === "z")) {
-      key.preventDefault();
-      this.state.redo();
-      this.requestRender();
-      return true;
-    }
-
-    if (key.ctrl && name === "x") {
-      key.preventDefault();
-      this.state.clearCanvas();
-      this.requestRender();
-      return true;
-    }
-
-    if (
-      !this.state.isEditingText &&
-      this.state.hasSelectedObject &&
-      (name === "backspace" || name === "delete")
-    ) {
-      key.preventDefault();
-      this.state.deleteSelectedObject();
-      this.requestRender();
-      return true;
-    }
-
-    if (name === "up") {
-      key.preventDefault();
-      if (this.state.hasSelectedObject && !this.state.isEditingText) {
-        this.state.moveSelectedObjectBy(0, -1);
-      } else {
-        this.state.moveCursor(0, -1);
-      }
-      this.requestRender();
-      return true;
-    }
-
-    if (name === "down") {
-      key.preventDefault();
-      if (this.state.hasSelectedObject && !this.state.isEditingText) {
-        this.state.moveSelectedObjectBy(0, 1);
-      } else {
-        this.state.moveCursor(0, 1);
-      }
-      this.requestRender();
-      return true;
-    }
-
-    if (name === "left") {
-      key.preventDefault();
-      if (this.state.hasSelectedObject && !this.state.isEditingText) {
-        this.state.moveSelectedObjectBy(-1, 0);
-      } else {
-        this.state.moveCursor(-1, 0);
-      }
-      this.requestRender();
-      return true;
-    }
-
-    if (name === "right") {
-      key.preventDefault();
-      if (this.state.hasSelectedObject && !this.state.isEditingText) {
-        this.state.moveSelectedObjectBy(1, 0);
-      } else {
-        this.state.moveCursor(1, 0);
-      }
-      this.requestRender();
-      return true;
-    }
-
-    if (this.state.currentMode === "box") {
-      if (key.raw === "[") {
-        key.preventDefault();
-        this.state.cycleBoxStyle(-1);
-        this.requestRender();
-        return true;
-      }
-
-      if (key.raw === "]") {
-        key.preventDefault();
-        this.state.cycleBoxStyle(1);
-        this.requestRender();
-        return true;
-      }
-    }
-
-    if (this.state.currentMode === "line") {
-      if (key.raw === "[") {
-        key.preventDefault();
-        this.state.cycleLineStyle(-1);
-        this.requestRender();
-        return true;
-      }
-
-      if (key.raw === "]") {
-        key.preventDefault();
-        this.state.cycleLineStyle(1);
-        this.requestRender();
-        return true;
-      }
-
-      if (name === "space") {
-        key.preventDefault();
-        this.state.stampBrushAtCursor();
-        this.requestRender();
-        return true;
-      }
-
-      if (name === "backspace" || name === "delete") {
-        key.preventDefault();
-        this.state.eraseAtCursor();
-        this.requestRender();
-        return true;
-      }
-
-      return false;
-    }
-
-    if (this.state.currentMode === "paint") {
-      if (key.raw === "[") {
-        key.preventDefault();
-        this.state.cycleBrush(-1);
-        this.requestRender();
-        return true;
-      }
-
-      if (key.raw === "]") {
-        key.preventDefault();
-        this.state.cycleBrush(1);
-        this.requestRender();
-        return true;
-      }
-
-      if (name === "space") {
-        key.preventDefault();
-        this.state.stampBrushAtCursor();
-        this.requestRender();
-        return true;
-      }
-
-      if (name === "backspace" || name === "delete") {
-        key.preventDefault();
-        this.state.eraseAtCursor();
-        this.requestRender();
-        return true;
-      }
-
-      return false;
-    }
-
-    if (this.state.currentMode === "text") {
-      if (key.raw === "[") {
-        key.preventDefault();
-        this.state.cycleTextBorderMode(-1);
-        this.requestRender();
-        return true;
-      }
-
-      if (key.raw === "]") {
-        key.preventDefault();
-        this.state.cycleTextBorderMode(1);
-        this.requestRender();
-        return true;
-      }
-
-      if (name === "backspace") {
-        key.preventDefault();
-        this.state.backspace();
-        this.requestRender();
-        return true;
-      }
-
-      if (name === "delete") {
-        key.preventDefault();
-        this.state.deleteAtCursor();
-        this.requestRender();
-        return true;
-      }
-
-      if (name === "space") {
-        key.preventDefault();
-        this.state.insertCharacter(" ");
-        this.requestRender();
-        return true;
-      }
-
-      if (isPrintableKey(key)) {
-        key.preventDefault();
-        this.state.insertCharacter(key.raw);
-        this.requestRender();
-        return true;
-      }
-    }
-
-    return false;
+    return handleKeyPress({
+      key,
+      state: this.state,
+      cancelOnCtrlCEnabled: this.cancelOnCtrlCEnabled,
+      onSave: this.onSaveCallback ? () => this.onSaveCallback?.(this.state.exportArt()) : null,
+      onCancel: this.onCancelCallback,
+      requestRender: () => this.requestRender(),
+      dismissStartupLogo: () => this.dismissStartupLogo(),
+    });
   }
 
+  /** Hides the startup logo permanently after the first meaningful interaction. */
   private dismissStartupLogo(): void {
     if (!this.startupLogoEnabled || this.startupLogoDismissed) return;
     this.startupLogoDismissed = true;
     this.requestRender();
   }
 
+  /** Recomputes the canvas size and returns the full-chrome layout when applicable. */
   private syncCanvasLayout(): AppLayout | null {
     if (this.chromeMode === "editor") {
-      this.state.ensureCanvasSize(this.width, this.height, EDITOR_CANVAS_INSETS);
+      this.state.ensureCanvasSize(this.width, this.height, getCanvasInsets(this.chromeMode));
       return null;
     }
 
-    const layout = this.getLayout();
-    this.state.ensureCanvasSize(layout.canvasViewWidth, this.height, FULL_CHROME_CANVAS_INSETS);
+    const layout = getLayout(this.width, this.height);
+    this.state.ensureCanvasSize(
+      layout.canvasViewWidth,
+      this.height,
+      getCanvasInsets(this.chromeMode),
+    );
     return layout;
-  }
-
-  private getLayout(): AppLayout {
-    const footerY = this.height - 2;
-    const bodyTop = 3;
-    const bodyBottom = this.height - 3;
-    const dividerX = this.width - TOOL_PALETTE_WIDTH - 2;
-
-    return {
-      dividerX,
-      paletteLeft: dividerX + 1,
-      paletteWidth: this.width - dividerX - 2,
-      bodyTop,
-      bodyBottom,
-      footerY,
-      canvasViewWidth: this.width - TOOL_PALETTE_WIDTH - 1,
-    };
-  }
-
-  private getPaletteButtonLeft(layout: AppLayout): number {
-    return layout.paletteLeft + 1;
-  }
-
-  private getContextualStyleRowCount(): number {
-    if (this.state.currentMode === "box") return BOX_STYLE_OPTIONS.length;
-    if (this.state.currentMode === "line") return LINE_STYLE_OPTIONS.length;
-    if (this.state.currentMode === "paint") return BRUSH_OPTIONS.length;
-    if (this.state.currentMode === "text") return TEXT_BORDER_OPTIONS.length;
-    return 0;
-  }
-
-  private getToolButtons(layout: AppLayout): ToolButton[] {
-    const buttonLeft = this.getPaletteButtonLeft(layout);
-    const definitions: Omit<ToolButton, "left" | "top" | "width" | "height">[] = [
-      { mode: "select", icon: "◎", label: "Select", color: COLORS.select },
-      { mode: "box", icon: "▣", label: "Box", color: COLORS.warning },
-      { mode: "line", icon: "╱", label: "Line", color: COLORS.accent },
-      { mode: "paint", icon: "▒", label: "Brush", color: COLORS.paint },
-      { mode: "text", icon: "T", label: "Text", color: COLORS.success },
-    ];
-
-    const buttons: ToolButton[] = [];
-    let top = layout.bodyTop + 3;
-
-    for (const definition of definitions) {
-      buttons.push({
-        ...definition,
-        left: buttonLeft,
-        top,
-        width: TOOL_BUTTON_WIDTH,
-        height: TOOL_BUTTON_HEIGHT,
-      });
-      top += TOOL_BUTTON_HEIGHT;
-
-      if (definition.mode === this.state.currentMode) {
-        top += this.getContextualStyleRowCount();
-      }
-    }
-
-    return buttons;
-  }
-
-  private getContextualStyleButtons(layout: AppLayout): StyleButton[] {
-    if (
-      this.state.currentMode !== "box" &&
-      this.state.currentMode !== "line" &&
-      this.state.currentMode !== "paint" &&
-      this.state.currentMode !== "text"
-    )
-      return [];
-
-    const buttonLeft = this.getPaletteButtonLeft(layout);
-    const activeButton = this.getToolButtons(layout).find(
-      (button) => button.mode === this.state.currentMode,
-    );
-    if (!activeButton) return [];
-
-    const options =
-      this.state.currentMode === "box"
-        ? BOX_STYLE_OPTIONS
-        : this.state.currentMode === "line"
-          ? LINE_STYLE_OPTIONS
-          : this.state.currentMode === "text"
-            ? TEXT_BORDER_OPTIONS
-            : BRUSH_OPTIONS.map((option) => ({
-                style: option.brush,
-                sample: option.sample,
-                label: option.label,
-              }));
-    return options.map((option, index) => ({
-      style: option.style,
-      left: buttonLeft,
-      top: activeButton.top + TOOL_BUTTON_HEIGHT + index,
-      width: STYLE_BUTTON_WIDTH,
-      sample: option.sample,
-      label: option.label,
-    }));
-  }
-
-  private getColorSwatches(layout: AppLayout): ColorSwatch[] {
-    const buttonLeft = this.getPaletteButtonLeft(layout);
-    const colorTop = layout.bodyTop;
-
-    return INK_COLORS.map((color, index) => ({
-      color,
-      left: buttonLeft + (index % COLOR_SWATCH_COLUMNS) * COLOR_SWATCH_WIDTH,
-      top: colorTop + Math.floor(index / COLOR_SWATCH_COLUMNS),
-      width: COLOR_SWATCH_WIDTH,
-    }));
-  }
-
-  private isCanvasChromeEvent(x: number, y: number, layout: AppLayout): boolean {
-    return (
-      x >= this.state.canvasLeftCol &&
-      x <= layout.dividerX - 1 &&
-      y >= this.state.canvasTopRow &&
-      y <= layout.bodyBottom
-    );
-  }
-
-  private drawTooSmallMessage(): void {
-    const width = this.width;
-    const height = this.height;
-    const lines = [
-      "Terminal too small for termDRAW!.",
-      `Need at least ${MIN_WIDTH}x${MIN_HEIGHT}.`,
-      "Resize and try again.",
-    ];
-
-    const startY = Math.max(0, Math.floor(height / 2) - 1);
-    for (let index = 0; index < lines.length; index += 1) {
-      const text = lines[index]!;
-      const x = Math.max(0, Math.floor((width - visibleCellCount(text)) / 2));
-      this.frameBuffer.drawText(
-        text,
-        x,
-        startY + index,
-        COLORS.warning,
-        COLORS.panel,
-        TextAttributes.BOLD,
-      );
-    }
-  }
-
-  private drawChrome(layout: AppLayout): void {
-    this.drawHorizontalBorder(0, "╭", "╮");
-    this.drawHorizontalBorder(this.height - 1, "╰", "╯");
-
-    for (let y = 1; y < this.height - 1; y += 1) {
-      this.drawOuterSideBorders(y);
-    }
-
-    for (let y = 1; y <= layout.bodyBottom; y += 1) {
-      this.frameBuffer.setCell(layout.dividerX, y, "│", COLORS.border, COLORS.panel);
-    }
-
-    this.drawHeaderRow(layout);
-    this.drawHeaderDivider(layout);
-    this.drawFooterRow(layout);
-  }
-
-  private drawHeaderRow(layout: AppLayout): void {
-    const y = 1;
-    const canvasHeaderWidth = Math.max(1, layout.dividerX - 1);
-    const paletteWidth = Math.max(1, this.width - layout.dividerX - 2);
-
-    this.frameBuffer.drawText(" ".repeat(canvasHeaderWidth), 1, y, COLORS.text, COLORS.panel);
-    this.frameBuffer.drawText(
-      " ".repeat(paletteWidth),
-      layout.dividerX + 1,
-      y,
-      COLORS.text,
-      COLORS.panel,
-    );
-
-    let x = 1;
-    x = drawSegment(
-      this.frameBuffer,
-      x,
-      y,
-      "termDRAW!",
-      COLORS.accent,
-      COLORS.panel,
-      TextAttributes.BOLD,
-    );
-    x = drawSegment(this.frameBuffer, x, y, "  tool:", COLORS.dim, COLORS.panel);
-
-    const modeLabel = this.state.getModeLabel();
-    const modeColor =
-      this.state.currentMode === "select"
-        ? COLORS.select
-        : this.state.currentMode === "line"
-          ? COLORS.accent
-          : this.state.currentMode === "box"
-            ? COLORS.warning
-            : this.state.currentMode === "paint"
-              ? COLORS.paint
-              : COLORS.success;
-    x = drawSegment(
-      this.frameBuffer,
-      x,
-      y,
-      modeLabel,
-      modeColor,
-      COLORS.panel,
-      TextAttributes.BOLD,
-    );
-
-    if (this.state.currentMode === "paint") {
-      const brush = BRUSH_OPTIONS.find((option) => option.brush === this.state.currentBrush);
-      x = drawSegment(this.frameBuffer, x, y, "  brush:", COLORS.dim, COLORS.panel);
-      x = drawSegment(
-        this.frameBuffer,
-        x,
-        y,
-        brush ? `${brush.sample} ${brush.label}` : `"${this.state.currentBrush}"`,
-        COLORS.paint,
-        COLORS.panel,
-      );
-    } else if (this.state.currentMode === "box") {
-      const boxStyle =
-        BOX_STYLE_OPTIONS.find((option) => option.style === this.state.currentBoxStyle) ??
-        BOX_STYLE_OPTIONS[0]!;
-      x = drawSegment(this.frameBuffer, x, y, "  style:", COLORS.dim, COLORS.panel);
-      x = drawSegment(
-        this.frameBuffer,
-        x,
-        y,
-        `${boxStyle.sample} ${boxStyle.label}`,
-        COLORS.warning,
-        COLORS.panel,
-      );
-    } else if (this.state.currentMode === "line") {
-      const lineStyle =
-        LINE_STYLE_OPTIONS.find((option) => option.style === this.state.currentLineStyle) ??
-        LINE_STYLE_OPTIONS[0]!;
-      x = drawSegment(this.frameBuffer, x, y, "  style:", COLORS.dim, COLORS.panel);
-      x = drawSegment(
-        this.frameBuffer,
-        x,
-        y,
-        `${lineStyle.sample} ${lineStyle.label}`,
-        COLORS.accent,
-        COLORS.panel,
-      );
-    } else if (this.state.currentMode === "text") {
-      const textBorder =
-        TEXT_BORDER_OPTIONS.find((option) => option.style === this.state.currentTextBorderMode) ??
-        TEXT_BORDER_OPTIONS[0]!;
-      x = drawSegment(this.frameBuffer, x, y, "  border:", COLORS.dim, COLORS.panel);
-      x = drawSegment(
-        this.frameBuffer,
-        x,
-        y,
-        `${textBorder.sample} ${textBorder.label}`,
-        COLORS.success,
-        COLORS.panel,
-      );
-    }
-
-    x = drawSegment(this.frameBuffer, x, y, "  color:", COLORS.dim, COLORS.panel);
-    drawSegment(
-      this.frameBuffer,
-      x,
-      y,
-      "●",
-      getInkColorValue(this.state.currentInkColor),
-      COLORS.panel,
-      TextAttributes.BOLD,
-    );
-
-    const paletteTitle = padToWidth("Tools", paletteWidth);
-    this.frameBuffer.drawText(
-      paletteTitle,
-      layout.dividerX + 1,
-      y,
-      COLORS.dim,
-      COLORS.panel,
-      TextAttributes.BOLD,
-    );
-  }
-
-  private drawHeaderDivider(layout: AppLayout): void {
-    const y = 2;
-    this.frameBuffer.setCell(0, y, "├", COLORS.border, COLORS.panel);
-    for (let x = 1; x < this.width - 1; x += 1) {
-      this.frameBuffer.setCell(x, y, "─", COLORS.border, COLORS.panel);
-    }
-    this.frameBuffer.setCell(layout.dividerX, y, "┼", COLORS.border, COLORS.panel);
-    this.frameBuffer.setCell(this.width - 1, y, "┤", COLORS.border, COLORS.panel);
-  }
-
-  private drawFooterRow(layout: AppLayout): void {
-    const text =
-      this.footerTextOverride ??
-      "B Brush • A Select • U Box • P Line • T Text • Esc Deselect • Enter/Ctrl+S Save • Ctrl+Q Quit";
-    const combined = `${text}  ${this.state.currentStatus}`;
-    const padded = padToWidth(combined, Math.max(1, this.width - 2));
-    this.frameBuffer.drawText(padded, 1, layout.footerY, COLORS.dim, COLORS.panel);
-  }
-
-  private drawToolPalette(layout: AppLayout): void {
-    const paletteWidth = Math.max(1, this.width - layout.dividerX - 2);
-    const paletteX = layout.dividerX + 1;
-
-    for (let y = layout.bodyTop; y <= layout.bodyBottom; y += 1) {
-      this.frameBuffer.drawText(" ".repeat(paletteWidth), paletteX, y, COLORS.text, COLORS.panel);
-    }
-
-    for (const button of this.getToolButtons(layout)) {
-      this.drawToolButton(button);
-    }
-
-    for (const button of this.getContextualStyleButtons(layout)) {
-      this.drawStyleButton(button);
-    }
-
-    this.drawColorPicker(layout);
-  }
-
-  private drawToolButton(button: ToolButton): void {
-    const isActive = this.state.currentMode === button.mode;
-    const fg = isActive ? COLORS.panel : button.color;
-    const bg = isActive ? button.color : COLORS.panel;
-    const borderColor = isActive ? button.color : COLORS.border;
-
-    this.frameBuffer.drawText(
-      `┌${"─".repeat(button.width - 2)}┐`,
-      button.left,
-      button.top,
-      borderColor,
-      COLORS.panel,
-      TextAttributes.BOLD,
-    );
-
-    const label = padToWidth(` ${button.icon} ${button.label} `, button.width - 2);
-    this.frameBuffer.drawText(
-      "│",
-      button.left,
-      button.top + 1,
-      borderColor,
-      COLORS.panel,
-      TextAttributes.BOLD,
-    );
-    this.frameBuffer.drawText(label, button.left + 1, button.top + 1, fg, bg, TextAttributes.BOLD);
-    this.frameBuffer.drawText(
-      "│",
-      button.left + button.width - 1,
-      button.top + 1,
-      borderColor,
-      COLORS.panel,
-      TextAttributes.BOLD,
-    );
-
-    this.frameBuffer.drawText(
-      `└${"─".repeat(button.width - 2)}┘`,
-      button.left,
-      button.top + 2,
-      borderColor,
-      COLORS.panel,
-      TextAttributes.BOLD,
-    );
-  }
-
-  private drawStyleButton(button: StyleButton): void {
-    const isActive =
-      this.state.currentMode === "box"
-        ? this.state.currentBoxStyle === button.style
-        : this.state.currentMode === "line"
-          ? this.state.currentLineStyle === button.style
-          : this.state.currentMode === "text"
-            ? this.state.currentTextBorderMode === button.style
-            : this.state.currentBrush === button.style;
-    const fg = isActive ? COLORS.panel : COLORS.text;
-    const bg = isActive ? COLORS.warning : COLORS.panel;
-    const text = padToWidth(`${button.sample} ${button.label}`, button.width);
-    this.frameBuffer.drawText(
-      text,
-      button.left,
-      button.top,
-      fg,
-      bg,
-      isActive ? TextAttributes.BOLD : TextAttributes.NONE,
-    );
-  }
-
-  private drawColorPicker(layout: AppLayout): void {
-    for (const swatch of this.getColorSwatches(layout)) {
-      this.drawColorSwatch(swatch);
-    }
-  }
-
-  private drawColorSwatch(swatch: ColorSwatch): void {
-    const isActive = this.state.currentInkColor === swatch.color;
-    const bg = getInkColorValue(swatch.color);
-    const fg = getInkColorContrast(swatch.color);
-    const text = isActive ? " • " : "   ";
-    this.frameBuffer.drawText(
-      text,
-      swatch.left,
-      swatch.top,
-      fg,
-      bg,
-      isActive ? TextAttributes.BOLD : TextAttributes.NONE,
-    );
-  }
-
-  private drawCanvas(): void {
-    const preview = this.state.getActivePreviewCharacters();
-    const marqueeChars = this.state.getSelectionMarqueeCharacters();
-    const selectedCells = this.state.getSelectedCellKeys();
-    const handleChars = this.state.getSelectionHandleCharacters();
-
-    for (let y = 0; y < this.state.height; y += 1) {
-      const rowY = this.state.canvasTopRow + y;
-
-      for (let x = 0; x < this.state.width; x += 1) {
-        const key = `${x},${y}`;
-        const handleChar = handleChars.get(key);
-        const marqueeChar = marqueeChars.get(key);
-        const previewChar = preview.get(key);
-        const cell = handleChar ?? marqueeChar ?? previewChar ?? this.state.getCompositeCell(x, y);
-        const cellColor = this.state.getCompositeColor(x, y);
-        const isCursor = x === this.state.currentCursorX && y === this.state.currentCursorY;
-        const isSelected = selectedCells.has(key);
-        const isHandle = handleChar !== undefined;
-        const isMarquee = marqueeChar !== undefined;
-        const fg = isCursor
-          ? COLORS.cursorFg
-          : isHandle
-            ? COLORS.handleFg
-            : isMarquee
-              ? COLORS.select
-              : isSelected
-                ? COLORS.selectionFg
-                : previewChar
-                  ? getInkColorValue(this.state.currentInkColor)
-                  : cellColor
-                    ? getInkColorValue(cellColor)
-                    : COLORS.text;
-        const bg = isCursor
-          ? COLORS.cursorBg
-          : isHandle
-            ? COLORS.handleBg
-            : isSelected
-              ? COLORS.selectionBg
-              : COLORS.panel;
-        const attributes =
-          isCursor || isSelected || isHandle || isMarquee
-            ? TextAttributes.BOLD
-            : TextAttributes.NONE;
-        this.frameBuffer.setCell(x + this.state.canvasLeftCol, rowY, cell, fg, bg, attributes);
-      }
-    }
-  }
-
-  private drawStartupLogo(layout: AppLayout | null): void {
-    if (!this.startupLogoEnabled || this.startupLogoDismissed) return;
-
-    const logoWidth = Math.max(...STARTUP_LOGO_LINES.map((line) => visibleCellCount(line)));
-    const logoHeight = STARTUP_LOGO_LINES.length;
-    const captionWidth = visibleCellCount(STARTUP_LOGO_CAPTION);
-    const availableWidth =
-      this.chromeMode === "full" && layout
-        ? layout.dividerX - this.state.canvasLeftCol
-        : this.state.width;
-    const availableHeight =
-      this.chromeMode === "full" && layout
-        ? layout.bodyBottom - this.state.canvasTopRow + 1
-        : this.state.height;
-    const showCaption = availableWidth >= captionWidth && availableHeight >= logoHeight + 2;
-    const overlayHeight = showCaption ? logoHeight + 2 : logoHeight;
-
-    if (availableWidth < logoWidth || availableHeight < overlayHeight) {
-      return;
-    }
-
-    const startY = this.state.canvasTopRow + Math.floor((availableHeight - overlayHeight) / 2);
-
-    for (const [rowIndex, line] of STARTUP_LOGO_LINES.entries()) {
-      const y = startY + rowIndex;
-      const lineWidth = visibleCellCount(line);
-      const startX = this.state.canvasLeftCol + Math.floor((availableWidth - lineWidth) / 2);
-      for (const [colIndex, char] of Array.from(line).entries()) {
-        if (char === " ") continue;
-        const x = startX + colIndex;
-        const fg = getStartupLogoColor(rowIndex, colIndex, line.length);
-        const attributes = rowIndex >= 2 ? TextAttributes.BOLD : TextAttributes.NONE;
-        this.frameBuffer.setCell(x, y, char, fg, COLORS.panel, attributes);
-      }
-    }
-
-    if (showCaption) {
-      const captionY = startY + logoHeight + 1;
-      const captionX = this.state.canvasLeftCol + Math.floor((availableWidth - captionWidth) / 2);
-      this.frameBuffer.drawText(
-        STARTUP_LOGO_CAPTION,
-        captionX,
-        captionY,
-        getStartupLogoCaptionColor(),
-        COLORS.panel,
-        TextAttributes.DIM,
-      );
-    }
-  }
-
-  private drawOuterSideBorders(y: number): void {
-    this.frameBuffer.setCell(0, y, "│", COLORS.border, COLORS.panel);
-    this.frameBuffer.setCell(this.width - 1, y, "│", COLORS.border, COLORS.panel);
-  }
-
-  private drawHorizontalBorder(y: number, left: string, right: string): void {
-    this.frameBuffer.setCell(0, y, left, COLORS.border, COLORS.panel);
-    for (let x = 1; x < this.width - 1; x += 1) {
-      this.frameBuffer.setCell(x, y, "─", COLORS.border, COLORS.panel);
-    }
-    this.frameBuffer.setCell(this.width - 1, y, right, COLORS.border, COLORS.panel);
   }
 }
 
+/** Options for the full-chrome standalone app renderable. */
 export type TermDrawAppRenderableOptions = Omit<TermDrawRenderableOptions, "chromeMode">;
+
+/** Options for the editor-only renderable. */
 export type TermDrawEditorRenderableOptions = Omit<TermDrawRenderableOptions, "chromeMode">;
 
+/** Full-chrome renderable wrapper used by the standalone app shell. */
 export class TermDrawAppRenderable extends TermDrawRenderable {
+  /** Creates a full-chrome termDRAW renderable. */
   constructor(ctx: RenderContext, options: TermDrawAppRenderableOptions = {}) {
     super(ctx, { ...options, chromeMode: "full" });
   }
 }
 
+/** Editor-only renderable wrapper used by embedded integrations. */
 export class TermDrawEditorRenderable extends TermDrawRenderable {
+  /** Creates an editor-only termDRAW renderable. */
   constructor(ctx: RenderContext, options: TermDrawEditorRenderableOptions = {}) {
     super(ctx, {
       ...options,
@@ -1254,12 +282,14 @@ export class TermDrawEditorRenderable extends TermDrawRenderable {
   }
 }
 
+/** Formats saved artwork as either plain text or a fenced markdown block. */
 export function formatSavedOutput(art: string, fenced: boolean): string {
   if (!fenced) return art;
   const content = art.length > 0 ? art : " ";
   return `\`\`\`text\n${content}\n\`\`\``;
 }
 
+/** Builds the CLI help text shown by the standalone termDRAW app. */
 export function buildHelpText(binaryName = "termdraw"): string {
   return truncateToCells(
     `${binaryName} [--output file] [--fenced|--plain]\n\n` +
