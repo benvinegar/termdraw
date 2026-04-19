@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { MouseButton } from "@opentui/core";
 import { DrawState, TEXT_BORDER_MODES } from "./draw-state";
 
+/** Converts canvas-local coordinates into the pointer coordinates expected by `DrawState`. */
 function canvasPoint(state: DrawState, x: number, y: number) {
   return {
     x: state.canvasLeftCol + x,

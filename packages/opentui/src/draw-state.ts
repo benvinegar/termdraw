@@ -1,882 +1,126 @@
+/**
+ * Home of the stateful `DrawState` coordinator.
+ *
+ * This file wires together tool state, selection state, undo/redo, pointer handling,
+ * object transforms, scene caching, and the higher-level editor behaviors built on the
+ * smaller helpers in `src/draw-state/`.
+ */
 import { MouseButton } from "@opentui/core";
+import {
+  clamp,
+  getRectArea,
+  getRectPerimeterPoints,
+  isValidRect,
+  normalizeRect,
+  rectContainsPoint,
+  rectContainsRect,
+  rectsIntersect,
+} from "./draw-state/geometry.js";
+import {
+  appendPaintSegment,
+  constrainLinePoint,
+  getLineRenderCharacters,
+  mergeUniquePoints,
+  pointFromKey,
+  pointsEqual,
+} from "./draw-state/line.js";
+import {
+  cloneObjects,
+  getBoundsUnion,
+  getBoxContentBounds,
+  getBoxCornerPoints,
+  getLineEndpointPoints,
+  getObjectBounds,
+  getObjectRenderCells,
+  getObjectSelectionBounds,
+  objectContainsPoint,
+  translateObject,
+} from "./draw-state/object-utils.js";
+import {
+  adjustConnection,
+  applyBoxPerimeter,
+  createCanvas,
+  createColorGrid,
+  createConnectionGrid,
+  getBoxBorderGlyphs,
+  getConnectionGlyph as getConnectionGlyphForGrid,
+  paintConnectionColor,
+} from "./draw-state/scene.js";
+import {
+  getTextContentOrigin,
+  getTextRenderRect,
+  getTextSelectionBounds,
+  normalizeCellCharacter,
+  padToWidth,
+  splitGraphemes,
+  truncateToCells,
+  visibleCellCount,
+} from "./text.js";
+import {
+  BRUSHES,
+  BOX_STYLES,
+  DEFAULT_CANVAS_INSETS,
+  INK_COLORS,
+  LINE_STYLES,
+  TEXT_BORDER_MODES,
+  type BoxObject,
+  type BoxResizeHandle,
+  type BoxStyle,
+  type CanvasGrid,
+  type CanvasInsets,
+  type ColorGrid,
+  type ConnectionGrid,
+  type ConnectionStyle,
+  type DragState,
+  type DrawMode,
+  type DrawObject,
+  type EraseState,
+  type HandleHit,
+  type InkColor,
+  type LineEndpointHandle,
+  type LineObject,
+  type LineStyle,
+  type ObjectHit,
+  type PaintObject,
+  type PendingBox,
+  type PendingLine,
+  type PendingPaint,
+  type PendingSelection,
+  type PointerEventLike,
+  type Point,
+  type Rect,
+  type Snapshot,
+  type TextBorderMode,
+  type TextObject,
+} from "./draw-state/types.js";
 
-export const BRUSHES = ["#", "*", "+", "x", "o", ".", "•", "░", "▒", "▓"] as const;
-export const BOX_STYLES = ["auto", "light", "heavy", "double"] as const;
-export const LINE_STYLES = ["smooth", "light", "double"] as const;
-export const INK_COLORS = [
-  "white",
-  "red",
-  "orange",
-  "yellow",
-  "green",
-  "cyan",
-  "blue",
-  "magenta",
-] as const;
+export {
+  BRUSHES,
+  BOX_STYLES,
+  INK_COLORS,
+  LINE_STYLES,
+  TEXT_BORDER_MODES,
+  padToWidth,
+  truncateToCells,
+  visibleCellCount,
+};
+export type {
+  BoxStyle,
+  CanvasInsets,
+  DrawMode,
+  DrawObject,
+  InkColor,
+  LineStyle,
+  PointerEventLike,
+  TextBorderMode,
+} from "./draw-state/types.js";
+
 const MAX_HISTORY = 100;
 const HANDLE_CHARACTER = "●";
 
-export type DrawMode = "select" | "box" | "line" | "paint" | "text";
-export type BoxStyle = (typeof BOX_STYLES)[number];
-export type LineStyle = (typeof LINE_STYLES)[number];
-export type InkColor = (typeof INK_COLORS)[number];
-type CanvasGrid = string[][];
-type ColorGrid = (InkColor | null)[][];
-type Point = { x: number; y: number };
-export type CanvasInsets = {
-  left: number;
-  top: number;
-  right: number;
-  bottom: number;
-};
-type Rect = { left: number; top: number; right: number; bottom: number };
-type ConnectionStyle = "light" | "heavy" | "double";
-type Direction = "n" | "e" | "s" | "w";
-type DirectionCounts = { light: number; heavy: number; double: number };
-type CellConnections = Record<Direction, DirectionCounts>;
-type ConnectionGrid = CellConnections[][];
-type BoxResizeHandle = "top-left" | "top-right" | "bottom-left" | "bottom-right";
-type LineEndpointHandle = "start" | "end";
-
-type BaseDrawObject = {
-  id: string;
-  z: number;
-  parentId: string | null;
-  color: InkColor;
-};
-
-type BoxObject = BaseDrawObject & {
-  type: "box";
-  left: number;
-  top: number;
-  right: number;
-  bottom: number;
-  style: BoxStyle;
-};
-
-type LineObject = BaseDrawObject & {
-  type: "line";
-  x1: number;
-  y1: number;
-  x2: number;
-  y2: number;
-  style: LineStyle;
-};
-
-type PaintObject = BaseDrawObject & {
-  type: "paint";
-  points: Point[];
-  brush: string;
-};
-
-export const TEXT_BORDER_MODES = ["none", "single", "double", "underline"] as const;
-export type TextBorderMode = (typeof TEXT_BORDER_MODES)[number];
-
-type TextObject = BaseDrawObject & {
-  type: "text";
-  x: number;
-  y: number;
-  content: string;
-  border: TextBorderMode;
-};
-
-export type DrawObject = BoxObject | LineObject | PaintObject | TextObject;
-
-type Snapshot = {
-  objects: DrawObject[];
-  selectedObjectIds: string[];
-  selectedObjectId: string | null;
-  activeTextObjectId: string | null;
-  cursorX: number;
-  cursorY: number;
-  nextObjectNumber: number;
-  nextZIndex: number;
-  textBorderMode: TextBorderMode;
-  textBorderModeIndex: number;
-};
-
-type PendingSelection = { start: Point; end: Point };
-type PendingBox = { start: Point; end: Point };
-type PendingLine = { start: Point; end: Point };
-type PendingPaint = { points: Point[]; lastPoint: Point };
-
-type MoveDragState = {
-  kind: "move";
-  objectId: string;
-  startMouse: Point;
-  originalObjects: DrawObject[];
-  pushedUndo: boolean;
-  textEditOnClick: boolean;
-};
-
-type ResizeBoxDragState = {
-  kind: "resize-box";
-  objectId: string;
-  startMouse: Point;
-  originalObject: BoxObject;
-  originalObjects: DrawObject[];
-  handle: BoxResizeHandle;
-  pushedUndo: boolean;
-};
-
-type LineEndpointDragState = {
-  kind: "line-endpoint";
-  objectId: string;
-  startMouse: Point;
-  originalObject: LineObject;
-  endpoint: LineEndpointHandle;
-  pushedUndo: boolean;
-};
-
-type DragState = MoveDragState | ResizeBoxDragState | LineEndpointDragState;
-
-type EraseState = {
-  erasedIds: Set<string>;
-  pushedUndo: boolean;
-};
-
-type HandleHit =
-  | {
-      kind: "box-corner";
-      object: BoxObject;
-      handle: BoxResizeHandle;
-    }
-  | {
-      kind: "line-endpoint";
-      object: LineObject;
-      endpoint: LineEndpointHandle;
-    };
-
-type ObjectHit = {
-  object: DrawObject;
-  onTextContent: boolean;
-};
-
-export type PointerEventLike = {
-  type: "down" | "up" | "drag" | "drag-end" | "scroll" | "move" | "drop" | "over" | "out";
-  button: number;
-  x: number;
-  y: number;
-  scrollDirection?: "up" | "down" | "left" | "right";
-  shift?: boolean;
-};
-
-const DIRECTIONS: Direction[] = ["n", "e", "s", "w"];
-const DIRECTION_BITS: Record<Direction, number> = {
-  n: 1,
-  e: 2,
-  s: 4,
-  w: 8,
-};
-const OPPOSITE_DIRECTION: Record<Direction, Direction> = {
-  n: "s",
-  e: "w",
-  s: "n",
-  w: "e",
-};
-const DIRECTION_DELTAS: Record<Direction, { dx: number; dy: number }> = {
-  n: { dx: 0, dy: -1 },
-  e: { dx: 1, dy: 0 },
-  s: { dx: 0, dy: 1 },
-  w: { dx: -1, dy: 0 },
-};
-
-const LIGHT_GLYPHS: Record<number, string> = {
-  0: " ",
-  1: "│",
-  2: "─",
-  3: "└",
-  4: "│",
-  5: "│",
-  6: "┌",
-  7: "├",
-  8: "─",
-  9: "┘",
-  10: "─",
-  11: "┴",
-  12: "┐",
-  13: "┤",
-  14: "┬",
-  15: "┼",
-};
-
-const HEAVY_GLYPHS: Record<number, string> = {
-  0: " ",
-  1: "┃",
-  2: "━",
-  3: "┗",
-  4: "┃",
-  5: "┃",
-  6: "┏",
-  7: "┣",
-  8: "━",
-  9: "┛",
-  10: "━",
-  11: "┻",
-  12: "┓",
-  13: "┫",
-  14: "┳",
-  15: "╋",
-};
-
-const DOUBLE_GLYPHS: Record<number, string> = {
-  0: " ",
-  1: "║",
-  2: "═",
-  3: "╚",
-  4: "║",
-  5: "║",
-  6: "╔",
-  7: "╠",
-  8: "═",
-  9: "╝",
-  10: "═",
-  11: "╩",
-  12: "╗",
-  13: "╣",
-  14: "╦",
-  15: "╬",
-};
-
-const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
-
-function splitGraphemes(input: string): string[] {
-  return Array.from(graphemeSegmenter.segment(input), (segment) => segment.segment);
-}
-
-export function truncateToCells(input: string, width: number): string {
-  if (width <= 0) return "";
-  return splitGraphemes(input).slice(0, width).join("");
-}
-
-export function visibleCellCount(input: string): number {
-  return splitGraphemes(input).length;
-}
-
-export function padToWidth(content: string, width: number): string {
-  const clipped = truncateToCells(content, width);
-  return clipped + " ".repeat(Math.max(0, width - visibleCellCount(clipped)));
-}
-
-function normalizeCellCharacter(input: string): string {
-  const first = splitGraphemes(input)[0] ?? " ";
-  return first.length > 0 ? first : " ";
-}
-
-function createCanvas(width: number, height: number): CanvasGrid {
-  return Array.from({ length: height }, () => Array.from({ length: width }, () => " "));
-}
-
-function createColorGrid(width: number, height: number): ColorGrid {
-  return Array.from({ length: height }, () => Array.from({ length: width }, () => null));
-}
-
-function createCellConnections(): CellConnections {
-  return {
-    n: { light: 0, heavy: 0, double: 0 },
-    e: { light: 0, heavy: 0, double: 0 },
-    s: { light: 0, heavy: 0, double: 0 },
-    w: { light: 0, heavy: 0, double: 0 },
-  };
-}
-
-function createConnectionGrid(width: number, height: number): ConnectionGrid {
-  return Array.from({ length: height }, () =>
-    Array.from({ length: width }, () => createCellConnections()),
-  );
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(value, max));
-}
-
-function normalizeRect(start: Point, end: Point): Rect {
-  return {
-    left: Math.min(start.x, end.x),
-    right: Math.max(start.x, end.x),
-    top: Math.min(start.y, end.y),
-    bottom: Math.max(start.y, end.y),
-  };
-}
-
-function rectContainsPoint(rect: Rect, x: number, y: number): boolean {
-  return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
-}
-
-function getRectPerimeterPoints(rect: Rect): Point[] {
-  const cells = new Map<string, Point>();
-  const add = (x: number, y: number) => {
-    cells.set(`${x},${y}`, { x, y });
-  };
-
-  for (let x = rect.left; x <= rect.right; x += 1) {
-    add(x, rect.top);
-    add(x, rect.bottom);
-  }
-  for (let y = rect.top; y <= rect.bottom; y += 1) {
-    add(rect.left, y);
-    add(rect.right, y);
-  }
-
-  return [...cells.values()];
-}
-
-function cloneObject(object: DrawObject): DrawObject {
-  if (object.type === "paint") {
-    return {
-      ...object,
-      points: object.points.map((point) => ({ ...point })),
-    };
-  }
-
-  return { ...object };
-}
-
-function cloneObjects(objects: DrawObject[]): DrawObject[] {
-  return objects.map((object) => cloneObject(object));
-}
-
-function adjustConnection(
-  grid: ConnectionGrid,
-  width: number,
-  height: number,
-  x: number,
-  y: number,
-  direction: Direction,
-  style: ConnectionStyle,
-  delta: number,
-): void {
-  if (x < 0 || y < 0 || x >= width || y >= height) return;
-  const offset = DIRECTION_DELTAS[direction];
-  const nx = x + offset.dx;
-  const ny = y + offset.dy;
-  if (nx < 0 || ny < 0 || nx >= width || ny >= height) return;
-
-  const source = grid[y]![x]![direction];
-  source[style] = Math.max(0, source[style] + delta);
-
-  const opposite = OPPOSITE_DIRECTION[direction];
-  const target = grid[ny]![nx]![opposite];
-  target[style] = Math.max(0, target[style] + delta);
-}
-
-function paintConnectionColor(
-  grid: ColorGrid,
-  width: number,
-  height: number,
-  x: number,
-  y: number,
-  direction: Direction,
-  color: InkColor,
-): void {
-  if (x < 0 || y < 0 || x >= width || y >= height) return;
-  const offset = DIRECTION_DELTAS[direction];
-  const nx = x + offset.dx;
-  const ny = y + offset.dy;
-  if (nx < 0 || ny < 0 || nx >= width || ny >= height) return;
-
-  grid[y]![x] = color;
-  grid[ny]![nx] = color;
-}
-
-function applyBoxPerimeter(
-  rect: Rect,
-  applySegment: (x: number, y: number, direction: Direction) => void,
-): void {
-  if (rect.left === rect.right && rect.top === rect.bottom) return;
-
-  for (let x = rect.left; x < rect.right; x += 1) {
-    applySegment(x, rect.top, "e");
-  }
-  if (rect.bottom !== rect.top) {
-    for (let x = rect.left; x < rect.right; x += 1) {
-      applySegment(x, rect.bottom, "e");
-    }
-  }
-
-  for (let y = rect.top; y < rect.bottom; y += 1) {
-    applySegment(rect.left, y, "s");
-  }
-  if (rect.right !== rect.left) {
-    for (let y = rect.top; y < rect.bottom; y += 1) {
-      applySegment(rect.right, y, "s");
-    }
-  }
-}
-
-function getBoxBorderGlyphs(style: ConnectionStyle) {
-  switch (style) {
-    case "heavy":
-      return {
-        horizontal: "━",
-        vertical: "┃",
-        topLeft: "┏",
-        topRight: "┓",
-        bottomLeft: "┗",
-        bottomRight: "┛",
-      };
-    case "double":
-      return {
-        horizontal: "═",
-        vertical: "║",
-        topLeft: "╔",
-        topRight: "╗",
-        bottomLeft: "╚",
-        bottomRight: "╝",
-      };
-    case "light":
-      return {
-        horizontal: "─",
-        vertical: "│",
-        topLeft: "┌",
-        topRight: "┐",
-        bottomLeft: "└",
-        bottomRight: "┘",
-      };
-  }
-}
-
-const BRAILLE_DOT_MASKS = [
-  [0x1, 0x8],
-  [0x2, 0x10],
-  [0x4, 0x20],
-  [0x40, 0x80],
-] as const;
-const BRAILLE_X_OFFSETS = [0.25, 0.75] as const;
-const BRAILLE_Y_OFFSETS = [0.125, 0.375, 0.625, 0.875] as const;
-const BRAILLE_LINE_THRESHOLD = 0.22;
-
-function getLineCharacter(start: Point, end: Point, style: LineStyle = "smooth"): string {
-  const dx = end.x - start.x;
-  const dy = end.y - start.y;
-  const absDx = Math.abs(dx);
-  const absDy = Math.abs(dy);
-
-  if (style === "light") {
-    if (dx === 0 && dy === 0) return "•";
-    if (dx === 0) return "│";
-    if (dy === 0) return "─";
-    if (absDx >= absDy * 2) return "─";
-    if (absDy >= absDx * 2) return "│";
-    return Math.sign(dx) === Math.sign(dy) ? "╲" : "╱";
-  }
-
-  if (style === "double") {
-    if (dx === 0 && dy === 0) return "•";
-    if (dx === 0) return "║";
-    if (dy === 0) return "═";
-    if (absDx >= absDy * 2) return "═";
-    if (absDy >= absDx * 2) return "║";
-    return Math.sign(dx) === Math.sign(dy) ? "╲" : "╱";
-  }
-
-  if (dx === 0 && dy === 0) return "•";
-  if (dx === 0) return "│";
-  if (dy === 0) return "─";
-  return Math.sign(dx) === Math.sign(dy) ? "╲" : "╱";
-}
-
-function shouldRenderLineAsBraille(start: Point, end: Point, style: LineStyle = "smooth"): boolean {
-  if (style !== "smooth") return false;
-  const dx = Math.abs(end.x - start.x);
-  const dy = Math.abs(end.y - start.y);
-  return dx !== 0 && dy !== 0 && dx !== dy;
-}
-
-function constrainLinePoint(anchor: Point, point: Point): Point {
-  const dx = point.x - anchor.x;
-  const dy = point.y - anchor.y;
-
-  if (Math.abs(dx) >= Math.abs(dy)) {
-    return { x: point.x, y: anchor.y };
-  }
-
-  return { x: anchor.x, y: point.y };
-}
-
-function getDistanceToSegmentSquared(
-  point: { x: number; y: number },
-  start: Point,
-  end: Point,
-): number {
-  const dx = end.x - start.x;
-  const dy = end.y - start.y;
-  const lengthSquared = dx * dx + dy * dy;
-
-  if (lengthSquared === 0) {
-    const offsetX = point.x - start.x;
-    const offsetY = point.y - start.y;
-    return offsetX * offsetX + offsetY * offsetY;
-  }
-
-  const t = clamp(((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSquared, 0, 1);
-  const projectedX = start.x + dx * t;
-  const projectedY = start.y + dy * t;
-  const offsetX = point.x - projectedX;
-  const offsetY = point.y - projectedY;
-  return offsetX * offsetX + offsetY * offsetY;
-}
-
-function getLineRenderCharacters(
-  start: Point,
-  end: Point,
-  style: LineStyle = "smooth",
-): Map<string, string> {
-  const rendered = new Map<string, string>();
-
-  if (!shouldRenderLineAsBraille(start, end, style)) {
-    const char = getLineCharacter(start, end, style);
-    for (const point of getLinePoints(start.x, start.y, end.x, end.y)) {
-      rendered.set(`${point.x},${point.y}`, char);
-    }
-    return rendered;
-  }
-
-  const segmentStart = { x: start.x + 0.5, y: start.y + 0.5 };
-  const segmentEnd = { x: end.x + 0.5, y: end.y + 0.5 };
-  const thresholdSquared = BRAILLE_LINE_THRESHOLD * BRAILLE_LINE_THRESHOLD;
-  const rect = normalizeRect(start, end);
-
-  for (let y = rect.top; y <= rect.bottom; y += 1) {
-    for (let x = rect.left; x <= rect.right; x += 1) {
-      let mask = 0;
-
-      for (let row = 0; row < BRAILLE_Y_OFFSETS.length; row += 1) {
-        for (let col = 0; col < BRAILLE_X_OFFSETS.length; col += 1) {
-          const point = {
-            x: x + BRAILLE_X_OFFSETS[col]!,
-            y: y + BRAILLE_Y_OFFSETS[row]!,
-          };
-          if (getDistanceToSegmentSquared(point, segmentStart, segmentEnd) > thresholdSquared) {
-            continue;
-          }
-          mask |= BRAILLE_DOT_MASKS[row]![col]!;
-        }
-      }
-
-      if (mask !== 0) {
-        rendered.set(`${x},${y}`, String.fromCodePoint(0x2800 + mask));
-      }
-    }
-  }
-
-  if (rendered.size > 0) {
-    return rendered;
-  }
-
-  const fallbackChar = getLineCharacter(start, end, style);
-  for (const point of getLinePoints(start.x, start.y, end.x, end.y)) {
-    rendered.set(`${point.x},${point.y}`, fallbackChar);
-  }
-  return rendered;
-}
-
-function pointFromKey(key: string): Point {
-  const [xText = "0", yText = "0"] = key.split(",");
-  return {
-    x: Number(xText),
-    y: Number(yText),
-  };
-}
-
-function getLineRenderCells(start: Point, end: Point, style: LineStyle = "smooth"): Point[] {
-  return [...getLineRenderCharacters(start, end, style).keys()].map((key) => pointFromKey(key));
-}
-
-function getLinePoints(x0: number, y0: number, x1: number, y1: number): Point[] {
-  const points: Point[] = [];
-
-  let currentX = x0;
-  let currentY = y0;
-  const deltaX = Math.abs(x1 - x0);
-  const deltaY = Math.abs(y1 - y0);
-  const stepX = x0 < x1 ? 1 : -1;
-  const stepY = y0 < y1 ? 1 : -1;
-  let err = deltaX - deltaY;
-
-  while (true) {
-    points.push({ x: currentX, y: currentY });
-    if (currentX === x1 && currentY === y1) break;
-    const twiceErr = err * 2;
-    if (twiceErr > -deltaY) {
-      err -= deltaY;
-      currentX += stepX;
-    }
-    if (twiceErr < deltaX) {
-      err += deltaX;
-      currentY += stepY;
-    }
-  }
-
-  return points;
-}
-
-function mergeUniquePoints(existing: Point[], next: Point[]): Point[] {
-  const merged = existing.map((point) => ({ ...point }));
-  const seen = new Set(existing.map((point) => `${point.x},${point.y}`));
-
-  for (const point of next) {
-    const key = `${point.x},${point.y}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    merged.push({ ...point });
-  }
-
-  return merged;
-}
-
-function appendPaintSegment(points: Point[], from: Point, to: Point): Point[] {
-  return mergeUniquePoints(points, getLinePoints(from.x, from.y, to.x, to.y));
-}
-
-function pointsEqual(a: Point[], b: Point[]): boolean {
-  return (
-    a.length === b.length &&
-    a.every((point, index) => point.x === b[index]?.x && point.y === b[index]?.y)
-  );
-}
-
-function getObjectBounds(object: DrawObject): Rect {
-  switch (object.type) {
-    case "box":
-      return { left: object.left, top: object.top, right: object.right, bottom: object.bottom };
-    case "line":
-      return normalizeRect({ x: object.x1, y: object.y1 }, { x: object.x2, y: object.y2 });
-    case "paint": {
-      const [firstPoint] = object.points;
-      let left = firstPoint?.x ?? 0;
-      let right = firstPoint?.x ?? 0;
-      let top = firstPoint?.y ?? 0;
-      let bottom = firstPoint?.y ?? 0;
-
-      for (const point of object.points) {
-        left = Math.min(left, point.x);
-        right = Math.max(right, point.x);
-        top = Math.min(top, point.y);
-        bottom = Math.max(bottom, point.y);
-      }
-
-      return { left, top, right, bottom };
-    }
-    case "text": {
-      const width = Math.max(1, visibleCellCount(object.content));
-      return {
-        left: object.x,
-        top: object.y,
-        right: object.x + width - 1,
-        bottom: object.y,
-      };
-    }
-  }
-}
-
-function getBoxContentBounds(box: BoxObject): Rect {
-  return {
-    left: box.left + 1,
-    top: box.top + 1,
-    right: box.right - 1,
-    bottom: box.bottom - 1,
-  };
-}
-
-function isValidRect(rect: Rect): boolean {
-  return rect.left <= rect.right && rect.top <= rect.bottom;
-}
-
-function rectContainsRect(outer: Rect, inner: Rect): boolean {
-  if (!isValidRect(outer)) return false;
-  return (
-    inner.left >= outer.left &&
-    inner.right <= outer.right &&
-    inner.top >= outer.top &&
-    inner.bottom <= outer.bottom
-  );
-}
-
-function rectsIntersect(a: Rect, b: Rect): boolean {
-  return a.left <= b.right && a.right >= b.left && a.top <= b.bottom && a.bottom >= b.top;
-}
-
-function getRectArea(rect: Rect): number {
-  return Math.max(0, rect.right - rect.left + 1) * Math.max(0, rect.bottom - rect.top + 1);
-}
-
-function getBoundsUnion(objects: DrawObject[]): Rect | null {
-  if (objects.length === 0) return null;
-
-  let left = Number.POSITIVE_INFINITY;
-  let top = Number.POSITIVE_INFINITY;
-  let right = Number.NEGATIVE_INFINITY;
-  let bottom = Number.NEGATIVE_INFINITY;
-
-  for (const object of objects) {
-    const bounds = getObjectBounds(object);
-    left = Math.min(left, bounds.left);
-    top = Math.min(top, bounds.top);
-    right = Math.max(right, bounds.right);
-    bottom = Math.max(bottom, bounds.bottom);
-  }
-
-  return { left, top, right, bottom };
-}
-
-function getTextRenderRect(object: TextObject): Rect {
-  const contentWidth = Math.max(1, visibleCellCount(object.content));
-  if (object.border === "none") {
-    return {
-      left: object.x,
-      top: object.y,
-      right: object.x + contentWidth - 1,
-      bottom: object.y,
-    };
-  }
-
-  return {
-    left: object.x,
-    top: object.y,
-    right: object.x + contentWidth + 1,
-    bottom: object.y + 2,
-  };
-}
-
-function getTextContentOrigin(object: TextObject): Point {
-  return object.border === "none"
-    ? { x: object.x, y: object.y }
-    : { x: object.x + 1, y: object.y + 1 };
-}
-
-function getTextSelectionBounds(object: TextObject): Rect {
-  const rect = getTextRenderRect(object);
-  return object.border === "none"
-    ? {
-        left: rect.left - 1,
-        top: rect.top - 1,
-        right: rect.right + 1,
-        bottom: rect.bottom + 1,
-      }
-    : rect;
-}
-
-function getObjectSelectionBounds(object: DrawObject): Rect {
-  return object.type === "text" ? getTextSelectionBounds(object) : getObjectBounds(object);
-}
-
-function getBoxCornerPoints(box: BoxObject): Record<BoxResizeHandle, Point> {
-  return {
-    "top-left": { x: box.left, y: box.top },
-    "top-right": { x: box.right, y: box.top },
-    "bottom-left": { x: box.left, y: box.bottom },
-    "bottom-right": { x: box.right, y: box.bottom },
-  };
-}
-
-function getLineEndpointPoints(line: LineObject): Record<LineEndpointHandle, Point> {
-  return {
-    start: { x: line.x1, y: line.y1 },
-    end: { x: line.x2, y: line.y2 },
-  };
-}
-
-function getObjectRenderCells(object: DrawObject): Point[] {
-  switch (object.type) {
-    case "box": {
-      const cells = new Map<string, Point>();
-      const add = (x: number, y: number) => {
-        cells.set(`${x},${y}`, { x, y });
-      };
-
-      for (let x = object.left; x <= object.right; x += 1) {
-        add(x, object.top);
-        add(x, object.bottom);
-      }
-      for (let y = object.top; y <= object.bottom; y += 1) {
-        add(object.left, y);
-        add(object.right, y);
-      }
-
-      return [...cells.values()];
-    }
-    case "line":
-      return getLineRenderCells(
-        { x: object.x1, y: object.y1 },
-        { x: object.x2, y: object.y2 },
-        object.style,
-      );
-    case "paint":
-      return object.points.map((point) => ({ ...point }));
-    case "text": {
-      const rect = getTextRenderRect(object);
-      const cells: Point[] = [];
-      for (let y = rect.top; y <= rect.bottom; y += 1) {
-        for (let x = rect.left; x <= rect.right; x += 1) {
-          cells.push({ x, y });
-        }
-      }
-      return cells;
-    }
-  }
-}
-
-function translateObject(object: DrawObject, dx: number, dy: number): DrawObject {
-  switch (object.type) {
-    case "box":
-      return {
-        ...object,
-        left: object.left + dx,
-        right: object.right + dx,
-        top: object.top + dy,
-        bottom: object.bottom + dy,
-      };
-    case "line":
-      return {
-        ...object,
-        x1: object.x1 + dx,
-        x2: object.x2 + dx,
-        y1: object.y1 + dy,
-        y2: object.y2 + dy,
-      };
-    case "paint":
-      return {
-        ...object,
-        points: object.points.map((point) => ({ x: point.x + dx, y: point.y + dy })),
-      };
-    case "text":
-      return {
-        ...object,
-        x: object.x + dx,
-        y: object.y + dy,
-      };
-  }
-}
-
-function objectContainsPoint(object: DrawObject, x: number, y: number): boolean {
-  switch (object.type) {
-    case "box": {
-      const withinBounds =
-        x >= object.left && x <= object.right && y >= object.top && y <= object.bottom;
-      if (!withinBounds) return false;
-      return x === object.left || x === object.right || y === object.top || y === object.bottom;
-    }
-    case "line":
-      return getLineRenderCells(
-        { x: object.x1, y: object.y1 },
-        { x: object.x2, y: object.y2 },
-        object.style,
-      ).some((point) => point.x === x && point.y === y);
-    case "paint":
-      return object.points.some((point) => point.x === x && point.y === y);
-    case "text":
-      return y === object.y && x >= object.x && x < object.x + visibleCellCount(object.content);
-  }
-}
-
-const DEFAULT_CANVAS_INSETS: CanvasInsets = {
-  left: 1,
-  top: 3,
-  right: 1,
-  bottom: 2,
-};
-
+/**
+ * Coordinates the editable termDRAW scene, tool state, selection state, and rendering caches.
+ */
 export class DrawState {
   private canvasInsets: CanvasInsets = { ...DEFAULT_CANVAS_INSETS };
 
@@ -925,6 +169,7 @@ export class DrawState {
   private renderConnections: ConnectionGrid = [];
   private renderConnectionColors: ColorGrid = [];
 
+  /** Creates a new draw state sized to the provided viewport and canvas insets. */
   constructor(viewWidth: number, viewHeight: number, insets: CanvasInsets = DEFAULT_CANVAS_INSETS) {
     this.ensureCanvasSize(viewWidth, viewHeight, insets);
   }
@@ -1004,6 +249,7 @@ export class DrawState {
     );
   }
 
+  /** Recomputes the drawable canvas from the current viewport and inset configuration. */
   public ensureCanvasSize(
     viewWidth: number,
     viewHeight: number,
@@ -1039,6 +285,7 @@ export class DrawState {
     this.eraseState = null;
   }
 
+  /** Routes pointer input into the active tool, drag interaction, or erase session. */
   public handlePointerEvent(event: PointerEventLike): void {
     if (event.type === "scroll") {
       const direction =
@@ -1191,6 +438,7 @@ export class DrawState {
     }
   }
 
+  /** Returns the compact UI label for the active tool mode. */
   public getModeLabel(): string {
     switch (this.mode) {
       case "select":
@@ -1206,6 +454,7 @@ export class DrawState {
     }
   }
 
+  /** Returns the in-progress overlay characters for the current pointer interaction. */
   public getActivePreviewCharacters(): Map<string, string> {
     if (this.pendingPaint) return this.getPaintPreviewCharacters();
     if (this.pendingLine) return this.getLinePreviewCharacters();
@@ -1213,6 +462,7 @@ export class DrawState {
     return new Map<string, string>();
   }
 
+  /** Returns the rendered cell keys currently covered by the selection overlay. */
   public getSelectedCellKeys(): Set<string> {
     const keys = new Set<string>();
 
@@ -1233,6 +483,7 @@ export class DrawState {
     return keys;
   }
 
+  /** Returns the dotted marquee preview for an in-progress selection drag. */
   public getSelectionMarqueeCharacters(): Map<string, string> {
     const marquee = new Map<string, string>();
     if (!this.pendingSelection) return marquee;
@@ -1246,6 +497,7 @@ export class DrawState {
     return marquee;
   }
 
+  /** Returns resize or endpoint handles for the current single-object selection. */
   public getSelectionHandleCharacters(): Map<string, string> {
     const handles = new Map<string, string>();
 
@@ -1272,6 +524,7 @@ export class DrawState {
     return handles;
   }
 
+  /** Clears the current selection and active text edit state. */
   public clearSelection(): boolean {
     const hadSelection =
       this.selectedObjectIds.length > 0 || this.activeTextObjectId !== null || this.textEntryArmed;
@@ -1282,6 +535,7 @@ export class DrawState {
     return hadSelection;
   }
 
+  /** Returns the final rendered character at a canvas cell. */
   public getCompositeCell(x: number, y: number): string {
     this.ensureScene();
     const ink = this.renderCanvas[y]![x] ?? " ";
@@ -1289,6 +543,7 @@ export class DrawState {
     return this.getConnectionGlyph(x, y);
   }
 
+  /** Returns the final rendered color at a canvas cell. */
   public getCompositeColor(x: number, y: number): InkColor | null {
     this.ensureScene();
     const ink = this.renderCanvas[y]![x] ?? " ";
@@ -1301,6 +556,7 @@ export class DrawState {
       : (this.renderConnectionColors[y]![x] ?? null);
   }
 
+  /** Moves the keyboard cursor while keeping it inside the canvas bounds. */
   public moveCursor(dx: number, dy: number): void {
     this.cursorX = Math.max(0, Math.min(this.canvasWidth - 1, this.cursorX + dx));
     this.cursorY = Math.max(0, Math.min(this.canvasHeight - 1, this.cursorY + dy));
@@ -1310,6 +566,7 @@ export class DrawState {
     this.setStatus(`Cursor ${this.cursorX + 1},${this.cursorY + 1}.`);
   }
 
+  /** Translates the selected object tree by the requested delta when possible. */
   public moveSelectedObjectBy(dx: number, dy: number): void {
     const selected = this.getSelectedObjects();
     if (selected.length === 0) {
@@ -1338,6 +595,7 @@ export class DrawState {
     );
   }
 
+  /** Sets the active brush character used for paint strokes. */
   public setBrush(char: string): void {
     this.brush = normalizeCellCharacter(char);
     const idx = BRUSHES.indexOf(this.brush as (typeof BRUSHES)[number]);
@@ -1345,12 +603,14 @@ export class DrawState {
     this.setStatus(`Brush set to "${this.brush}".`);
   }
 
+  /** Cycles through the predefined brush palette. */
   public cycleBrush(direction: 1 | -1): void {
     this.brushIndex = (this.brushIndex + direction + BRUSHES.length) % BRUSHES.length;
     this.brush = BRUSHES[this.brushIndex] ?? this.brush;
     this.setStatus(`Brush set to "${this.brush}".`);
   }
 
+  /** Sets the active ink color and reapplies it to the current selection. */
   public setInkColor(color: InkColor): void {
     this.inkColor = color;
     const idx = INK_COLORS.indexOf(color);
@@ -1372,12 +632,14 @@ export class DrawState {
     );
   }
 
+  /** Cycles through the available ink colors. */
   public cycleInkColor(direction: 1 | -1): void {
     this.inkColorIndex = (this.inkColorIndex + direction + INK_COLORS.length) % INK_COLORS.length;
     this.inkColor = INK_COLORS[this.inkColorIndex] ?? this.inkColor;
     this.setStatus(`Color set to ${this.describeInkColor(this.inkColor)}.`);
   }
 
+  /** Sets the active box border style. */
   public setBoxStyle(style: BoxStyle): void {
     this.boxStyle = style;
     const idx = BOX_STYLES.indexOf(style);
@@ -1385,12 +647,14 @@ export class DrawState {
     this.setStatus(`Box style set to ${this.describeBoxStyle(style)}.`);
   }
 
+  /** Cycles through the available box border styles. */
   public cycleBoxStyle(direction: 1 | -1): void {
     this.boxStyleIndex = (this.boxStyleIndex + direction + BOX_STYLES.length) % BOX_STYLES.length;
     this.boxStyle = BOX_STYLES[this.boxStyleIndex] ?? this.boxStyle;
     this.setStatus(`Box style set to ${this.describeBoxStyle(this.boxStyle)}.`);
   }
 
+  /** Sets the active line style. */
   public setLineStyle(style: LineStyle): void {
     this.lineStyle = style;
     const idx = LINE_STYLES.indexOf(style);
@@ -1398,6 +662,7 @@ export class DrawState {
     this.setStatus(`Line style set to ${this.describeLineStyle(style)}.`);
   }
 
+  /** Cycles through the available line styles. */
   public cycleLineStyle(direction: 1 | -1): void {
     this.lineStyleIndex =
       (this.lineStyleIndex + direction + LINE_STYLES.length) % LINE_STYLES.length;
@@ -1405,6 +670,7 @@ export class DrawState {
     this.setStatus(`Line style set to ${this.describeLineStyle(this.lineStyle)}.`);
   }
 
+  /** Sets the active text border mode. */
   public setTextBorderMode(mode: TextBorderMode): void {
     this.textBorderMode = mode;
     const idx = TEXT_BORDER_MODES.indexOf(mode);
@@ -1412,6 +678,7 @@ export class DrawState {
     this.setStatus(`Text border set to ${this.describeTextBorderMode(mode)}.`);
   }
 
+  /** Cycles through the available text border modes. */
   public cycleTextBorderMode(direction: 1 | -1): void {
     this.textBorderModeIndex =
       (this.textBorderModeIndex + direction + TEXT_BORDER_MODES.length) % TEXT_BORDER_MODES.length;
@@ -1419,6 +686,7 @@ export class DrawState {
     this.setStatus(`Text border set to ${this.describeTextBorderMode(this.textBorderMode)}.`);
   }
 
+  /** Advances to the next drawing mode in the standard tool order. */
   public cycleMode(): void {
     const order: DrawMode[] = ["select", "box", "line", "paint", "text"];
     const currentIndex = order.indexOf(this.mode);
@@ -1426,6 +694,7 @@ export class DrawState {
     this.setMode(next);
   }
 
+  /** Switches tools and clears transient interaction state that does not survive mode changes. */
   public setMode(next: DrawMode): void {
     if (this.mode === next) return;
     this.mode = next;
@@ -1462,6 +731,7 @@ export class DrawState {
     }
   }
 
+  /** Creates a one-cell paint or line object at the current cursor position. */
   public stampBrushAtCursor(): void {
     this.pushUndo();
 
@@ -1500,11 +770,13 @@ export class DrawState {
     this.setStatus(`Stamped "•" at ${this.cursorX + 1},${this.cursorY + 1}.`);
   }
 
+  /** Deletes the topmost object under the keyboard cursor. */
   public eraseAtCursor(): void {
     if (this.deleteTopmostObjectAt(this.cursorX, this.cursorY)) return;
     this.setStatus(`Nothing to erase at ${this.cursorX + 1},${this.cursorY + 1}.`);
   }
 
+  /** Appends text into the active text object or starts a new one at the cursor. */
   public insertCharacter(input: string): void {
     if (!this.textEntryArmed && !this.getActiveTextObject()) {
       this.setStatus("Click to start a text box, or click existing text to edit it.");
@@ -1549,6 +821,7 @@ export class DrawState {
     this.setStatus(`Created ${this.describeObject(this.getObjectById(object.id) ?? object)}.`);
   }
 
+  /** Deletes the last grapheme from the active text object or erases under the cursor. */
   public backspace(): void {
     const activeObject = this.getActiveTextObject();
     if (!activeObject) {
@@ -1585,12 +858,14 @@ export class DrawState {
     this.setStatus(`Backspaced ${this.describeObject(updated)}.`);
   }
 
+  /** Deletes the current selection or the topmost object under the cursor. */
   public deleteAtCursor(): void {
     if (this.deleteSelectedObject()) return;
     if (this.deleteTopmostObjectAt(this.cursorX, this.cursorY)) return;
     this.setStatus(`Nothing to delete at ${this.cursorX + 1},${this.cursorY + 1}.`);
   }
 
+  /** Deletes the current selection and returns whether anything was removed. */
   public deleteSelectedObject(): boolean {
     const selected = this.getSelectedObjects();
     if (selected.length === 0) return false;
@@ -1608,6 +883,7 @@ export class DrawState {
     return true;
   }
 
+  /** Removes every object from the scene. */
   public clearCanvas(): void {
     if (this.objects.length === 0) {
       this.setStatus("Canvas already clear.");
@@ -1628,6 +904,7 @@ export class DrawState {
     this.setStatus("Canvas cleared.");
   }
 
+  /** Restores the previous snapshot when one exists. */
   public undo(): void {
     const snapshot = this.undoStack.pop();
     if (!snapshot) {
@@ -1644,6 +921,7 @@ export class DrawState {
     this.setStatus("Undid last change.");
   }
 
+  /** Reapplies the next redo snapshot when one exists. */
   public redo(): void {
     const snapshot = this.redoStack.pop();
     if (!snapshot) {
@@ -1660,6 +938,7 @@ export class DrawState {
     this.setStatus("Redid change.");
   }
 
+  /** Exports the rendered canvas with surrounding empty rows trimmed away. */
   public exportArt(): string {
     this.ensureScene();
     const lines: string[] = [];
@@ -1683,6 +962,7 @@ export class DrawState {
     return lines.join("\n");
   }
 
+  /** Attempts to start a resize, endpoint drag, or move interaction at the given cell. */
   private tryBeginObjectInteraction(x: number, y: number): boolean {
     this.activeTextObjectId = null;
 
@@ -1729,6 +1009,7 @@ export class DrawState {
     return true;
   }
 
+  /** Begins moving an object or selection rooted at the clicked object. */
   private beginMoveInteraction(
     object: DrawObject,
     x: number,
@@ -1759,6 +1040,7 @@ export class DrawState {
     );
   }
 
+  /** Arms text entry at the requested canvas cell. */
   private placeTextCursor(x: number, y: number): void {
     this.setSelectedObjects([]);
     this.activeTextObjectId = null;
@@ -1768,6 +1050,7 @@ export class DrawState {
     this.setStatus(`Text box start at ${x + 1},${y + 1}. Type to begin, Esc to stop typing.`);
   }
 
+  /** Starts a right-drag erase session that only removes each object once. */
   private beginEraseSession(): void {
     this.pendingSelection = null;
     this.pendingLine = null;
@@ -1781,6 +1064,7 @@ export class DrawState {
     };
   }
 
+  /** Updates the active transient pointer interaction to the latest pointer location. */
   private syncPointerInteraction(point: Point, constrainLineAxis = false): void {
     if (this.dragState) {
       this.updateDraggedObject(point, constrainLineAxis);
@@ -1814,6 +1098,7 @@ export class DrawState {
     }
   }
 
+  /** Commits or cancels the current transient pointer interaction. */
   private finishPointerInteraction(point: Point, insideCanvas: boolean): void {
     if (this.pendingSelection) {
       const rect = normalizeRect(this.pendingSelection.start, this.pendingSelection.end);
@@ -1968,6 +1253,7 @@ export class DrawState {
     }
   }
 
+  /** Applies the latest drag position to the active move, resize, or endpoint edit. */
   private updateDraggedObject(point: Point, constrainLineAxis = false): void {
     const dragState = this.dragState;
     if (!dragState) return;
@@ -2033,6 +1319,7 @@ export class DrawState {
     }
   }
 
+  /** Keeps stored drag snapshots aligned with any z-index changes made during dragging. */
   private syncDragStateZ(objects: DrawObject[]): void {
     if (!this.dragState) return;
 
@@ -2064,6 +1351,7 @@ export class DrawState {
     }
   }
 
+  /** Erases the topmost object at a cell during an active erase session. */
   private eraseObjectAt(x: number, y: number): void {
     const hit = this.findTopmostObjectAt(x, y);
     if (!hit || !this.eraseState) return;
@@ -2086,6 +1374,7 @@ export class DrawState {
     this.setStatus(`Deleted ${this.describeObject(hit)}.`);
   }
 
+  /** Deletes the topmost object at a cell and reports whether anything changed. */
   private deleteTopmostObjectAt(x: number, y: number): boolean {
     const hit = this.findTopmostObjectAt(x, y);
     if (!hit) return false;
@@ -2101,6 +1390,7 @@ export class DrawState {
     return true;
   }
 
+  /** Captures the undoable editor state needed to restore the scene later. */
   private createSnapshot(): Snapshot {
     return {
       objects: cloneObjects(this.objects),
@@ -2116,6 +1406,7 @@ export class DrawState {
     };
   }
 
+  /** Pushes the current state onto the undo stack and clears redo history. */
   private pushUndo(): void {
     this.undoStack.push(this.createSnapshot());
     if (this.undoStack.length > MAX_HISTORY) {
@@ -2124,6 +1415,7 @@ export class DrawState {
     this.redoStack = [];
   }
 
+  /** Restores editor state from an undo or redo snapshot. */
   private restoreSnapshot(snapshot: Snapshot): void {
     this.objects = this.recomputeParentAssignments(
       cloneObjects(snapshot.objects).map((object) => this.shiftObjectInsideCanvas(object)),
@@ -2148,6 +1440,7 @@ export class DrawState {
     this.markSceneDirty();
   }
 
+  /** Rebuilds cached render buffers when scene content has changed. */
   private ensureScene(): void {
     if (!this.sceneDirty) return;
 
@@ -2248,37 +1541,25 @@ export class DrawState {
     this.sceneDirty = false;
   }
 
+  /** Writes a normalized character and color into the cached render canvas. */
   private paintRenderCell(x: number, y: number, char: string, color: InkColor): void {
     if (!this.isInsideCanvas(x, y)) return;
     this.renderCanvas[y]![x] = normalizeCellCharacter(char);
     this.renderCanvasColors[y]![x] = color;
   }
 
+  /** Returns the composed box-drawing glyph for the connection grid at a cell. */
   private getConnectionGlyph(x: number, y: number): string {
-    if (!this.isInsideCanvas(x, y)) return " ";
-
-    let mask = 0;
-    let hasHeavy = false;
-    let hasDouble = false;
-
-    for (const direction of DIRECTIONS) {
-      const counts = this.renderConnections[y]![x]![direction];
-      if (counts.light > 0 || counts.heavy > 0 || counts.double > 0) {
-        mask |= DIRECTION_BITS[direction];
-      }
-      if (counts.heavy > 0) {
-        hasHeavy = true;
-      }
-      if (counts.double > 0) {
-        hasDouble = true;
-      }
-    }
-
-    if (mask === 0) return " ";
-    const table = hasDouble ? DOUBLE_GLYPHS : hasHeavy ? HEAVY_GLYPHS : LIGHT_GLYPHS;
-    return table[mask] ?? (hasDouble ? "╬" : hasHeavy ? "╋" : "┼");
+    return getConnectionGlyphForGrid(
+      this.renderConnections,
+      x,
+      y,
+      this.canvasWidth,
+      this.canvasHeight,
+    );
   }
 
+  /** Builds the preview overlay for an in-progress line drag. */
   private getLinePreviewCharacters(): Map<string, string> {
     const preview = new Map<string, string>();
     if (!this.pendingLine) return preview;
@@ -2296,6 +1577,7 @@ export class DrawState {
     return preview;
   }
 
+  /** Builds the preview overlay for an in-progress paint stroke. */
   private getPaintPreviewCharacters(): Map<string, string> {
     const preview = new Map<string, string>();
     if (!this.pendingPaint) return preview;
@@ -2308,6 +1590,7 @@ export class DrawState {
     return preview;
   }
 
+  /** Builds the preview overlay for an in-progress box drag. */
   private getBoxPreviewCharacters(): Map<string, string> {
     const preview = new Map<string, string>();
     if (!this.pendingBox) return preview;
@@ -2339,6 +1622,7 @@ export class DrawState {
     return preview;
   }
 
+  /** Normalizes auto box styling into a concrete connection style. */
   private resolveBoxConnectionStyle(
     rect: Rect,
     style: BoxStyle,
@@ -2351,6 +1635,7 @@ export class DrawState {
     return style;
   }
 
+  /** Alternates auto box weight based on nesting depth inside other boxes. */
   private getAutoBoxConnectionStyle(rect: Rect, ignoreId?: string): ConnectionStyle {
     const depth = this.objects.filter((object) => {
       if (object.type !== "box") return false;
@@ -2366,19 +1651,23 @@ export class DrawState {
     return depth % 2 === 0 ? "heavy" : "light";
   }
 
+  /** Looks up an object by id. */
   private getObjectById(id: string): DrawObject | null {
     return this.objects.find((object) => object.id === id) ?? null;
   }
 
+  /** Returns whether the given object id is currently selected. */
   private isObjectSelected(id: string): boolean {
     return this.selectedObjectIds.includes(id) || this.selectedObjectId === id;
   }
 
+  /** Returns the primary selected object when one exists. */
   private getSelectedObject(): DrawObject | null {
     if (!this.selectedObjectId) return null;
     return this.getObjectById(this.selectedObjectId);
   }
 
+  /** Returns the selected objects in stable selection order. */
   private getSelectedObjects(): DrawObject[] {
     const ids =
       this.selectedObjectIds.length > 0
@@ -2392,6 +1681,7 @@ export class DrawState {
       .filter((object): object is DrawObject => object !== null);
   }
 
+  /** Returns selected objects that are not descendants of other selected objects. */
   private getSelectedRootObjects(): DrawObject[] {
     const selectedIds = new Set(this.selectedObjectIds);
 
@@ -2407,6 +1697,7 @@ export class DrawState {
     });
   }
 
+  /** Returns the full object trees rooted at the selected top-level objects. */
   private getSelectedObjectTrees(): DrawObject[] {
     const treeIds = new Set<string>();
 
@@ -2419,6 +1710,7 @@ export class DrawState {
     return this.objects.filter((object) => treeIds.has(object.id));
   }
 
+  /** Returns the object tree that should move when the given object is dragged. */
   private getMoveSelectionForObject(object: DrawObject): DrawObject[] {
     if (!this.isObjectSelected(object.id) || this.selectedObjectIds.length <= 1) {
       return this.getObjectTree(object.id);
@@ -2427,12 +1719,14 @@ export class DrawState {
     return this.getSelectedObjectTrees();
   }
 
+  /** Returns the text object currently being edited, if any. */
   private getActiveTextObject(): TextObject | null {
     if (!this.activeTextObjectId) return null;
     const object = this.getObjectById(this.activeTextObjectId);
     return object?.type === "text" ? object : null;
   }
 
+  /** Returns the object identified by `id` plus all of its descendants. */
   private getObjectTree(id: string, objects = this.objects): DrawObject[] {
     const descendants = new Set<string>([id]);
     let changed = true;
@@ -2450,9 +1744,11 @@ export class DrawState {
     return objects.filter((object) => descendants.has(object.id));
   }
 
+  /** Reassigns parent boxes so each object belongs to the smallest containing box. */
   private recomputeParentAssignments(objects: DrawObject[]): DrawObject[] {
     return objects.map((object) => {
       const bounds = getObjectBounds(object);
+      // Prefer the smallest containing box so nested boxes form the parent tree users expect.
       const candidates = objects
         .filter(
           (candidate): candidate is BoxObject =>
@@ -2471,25 +1767,30 @@ export class DrawState {
     });
   }
 
+  /** Replaces the scene object list and refreshes dependent selection and render state. */
   private setObjects(nextObjects: DrawObject[]): void {
     this.objects = this.recomputeParentAssignments(nextObjects);
     this.syncSelection();
     this.markSceneDirty();
   }
 
+  /** Replaces a single object in the scene by id. */
   private replaceObject(nextObject: DrawObject): void {
     this.replaceObjects([nextObject]);
   }
 
+  /** Replaces multiple objects in the scene by id. */
   private replaceObjects(nextObjects: DrawObject[]): void {
     const replacementMap = new Map(nextObjects.map((object) => [object.id, object]));
     this.setObjects(this.objects.map((object) => replacementMap.get(object.id) ?? object));
   }
 
+  /** Removes a single object from the scene. */
   private removeObjectById(id: string): void {
     this.setObjects(this.objects.filter((object) => object.id !== id));
   }
 
+  /** Updates multi-selection state while preserving a valid primary selection. */
   private setSelectedObjects(ids: string[], primaryId: string | null = ids.at(-1) ?? null): void {
     const existingIds = new Set(this.objects.map((object) => object.id));
     const nextIds = [...new Set(ids)].filter((id) => existingIds.has(id));
@@ -2506,6 +1807,7 @@ export class DrawState {
     }
   }
 
+  /** Drops dangling selection references after scene changes. */
   private syncSelection(): void {
     const existingIds = new Set(this.objects.map((object) => object.id));
     this.selectedObjectIds = this.selectedObjectIds.filter((id) => existingIds.has(id));
@@ -2534,6 +1836,7 @@ export class DrawState {
     }
   }
 
+  /** Finds the topmost resize or endpoint handle at a canvas cell. */
   private findTopmostHandleAt(x: number, y: number): HandleHit | null {
     const indexedObjects = this.objects.map((object, index) => ({ object, index }));
     indexedObjects.sort((a, b) => b.object.z - a.object.z || b.index - a.index);
@@ -2565,11 +1868,13 @@ export class DrawState {
     return null;
   }
 
+  /** Finds the topmost object occupying a canvas cell. */
   private findTopmostObjectAt(x: number, y: number): DrawObject | null {
     const hit = this.findTopmostObjectHitAt(x, y);
     return hit?.object ?? null;
   }
 
+  /** Finds the topmost object hit and whether the click landed on text content. */
   private findTopmostObjectHitAt(x: number, y: number): ObjectHit | null {
     const indexedObjects = this.objects.map((object, index) => ({ object, index }));
     indexedObjects.sort((a, b) => b.object.z - a.object.z || b.index - a.index);
@@ -2599,10 +1904,12 @@ export class DrawState {
     return null;
   }
 
+  /** Returns every object whose selection bounds intersect the marquee. */
   private getObjectsWithinSelectionRect(rect: Rect): DrawObject[] {
     return this.objects.filter((object) => rectsIntersect(getObjectSelectionBounds(object), rect));
   }
 
+  /** Translates an object while clamping it inside the canvas bounds. */
   private translateObjectWithinCanvas(
     object: DrawObject,
     desiredDx: number,
@@ -2621,6 +1928,7 @@ export class DrawState {
     return translateObject(object, dx, dy);
   }
 
+  /** Translates an object tree while clamping the entire group inside the canvas. */
   private translateObjectTreeWithinCanvas(
     objects: DrawObject[],
     desiredDx: number,
@@ -2640,6 +1948,7 @@ export class DrawState {
     return objects.map((object) => translateObject(object, dx, dy));
   }
 
+  /** Resizes a box from one handle while keeping it inside the canvas. */
   private resizeBoxWithinCanvas(box: BoxObject, handle: BoxResizeHandle, point: Point): BoxObject {
     const anchor = this.getOppositeBoxCorner(box, handle);
     const clampedPoint = this.clampPointInsideCanvas(point);
@@ -2655,6 +1964,7 @@ export class DrawState {
     };
   }
 
+  /** Resizes a box and remaps its descendants into the resized content area. */
   private resizeObjectTreeWithinCanvas(
     originalObjects: DrawObject[],
     originalBox: BoxObject,
@@ -2674,6 +1984,7 @@ export class DrawState {
     });
   }
 
+  /** Remaps a child object from one parent-content rectangle into another. */
   private transformObjectForResizedParent(
     object: DrawObject,
     originalContentBounds: Rect,
@@ -2750,6 +2061,7 @@ export class DrawState {
     }
   }
 
+  /** Maps a point proportionally from one rectangle into another. */
   private mapPointBetweenRects(point: Point, from: Rect, to: Rect): Point {
     return {
       x: this.mapAxisBetweenRanges(point.x, from.left, from.right, to.left, to.right),
@@ -2757,6 +2069,7 @@ export class DrawState {
     };
   }
 
+  /** Maps a scalar value proportionally between two inclusive ranges. */
   private mapAxisBetweenRanges(
     value: number,
     fromStart: number,
@@ -2768,6 +2081,7 @@ export class DrawState {
       return toStart;
     }
 
+    // Preserve the child's relative position within the old range when remapping into the new one.
     const ratio = (value - fromStart) / (fromEnd - fromStart);
     const mapped = Math.round(toStart + ratio * (toEnd - toStart));
     const min = Math.min(toStart, toEnd);
@@ -2775,6 +2089,7 @@ export class DrawState {
     return clamp(mapped, min, max);
   }
 
+  /** Keeps a text object fully inside a target rectangle after remapping. */
   private clampTextIntoRect(text: TextObject, rect: Rect): TextObject {
     if (!isValidRect(rect)) return text;
 
@@ -2793,6 +2108,7 @@ export class DrawState {
     };
   }
 
+  /** Moves one endpoint of a line while honoring canvas bounds and axis constraints. */
   private adjustLineEndpointWithinCanvas(
     line: LineObject,
     endpoint: LineEndpointHandle,
@@ -2818,6 +2134,7 @@ export class DrawState {
     };
   }
 
+  /** Returns the fixed anchor corner opposite the dragged resize handle. */
   private getOppositeBoxCorner(box: BoxObject, handle: BoxResizeHandle): Point {
     switch (handle) {
       case "top-left":
@@ -2831,6 +2148,7 @@ export class DrawState {
     }
   }
 
+  /** Clamps a point into the current canvas bounds. */
   private clampPointInsideCanvas(point: Point): Point {
     return {
       x: clamp(point.x, 0, this.canvasWidth - 1),
@@ -2838,6 +2156,7 @@ export class DrawState {
     };
   }
 
+  /** Adjusts a resized box point so the box never collapses to a single cell. */
   private ensureBoxDoesNotCollapse(anchor: Point, point: Point): Point {
     if (anchor.x !== point.x || anchor.y !== point.y) {
       return point;
@@ -2859,6 +2178,7 @@ export class DrawState {
     return point;
   }
 
+  /** Shifts an object just enough to bring it fully back inside the canvas. */
   private shiftObjectInsideCanvas(object: DrawObject): DrawObject {
     const bounds = getObjectBounds(object);
     let dx = 0;
@@ -2886,6 +2206,7 @@ export class DrawState {
     } as T;
   }
 
+  /** Brings a group of objects to the front while preserving their relative stacking order. */
   private bringObjectsToFront(objects: DrawObject[]): DrawObject[] {
     const byId = new Map<string, DrawObject>();
 
@@ -2896,22 +2217,26 @@ export class DrawState {
     return objects.map((object) => byId.get(object.id) ?? object);
   }
 
+  /** Allocates the next stable object id. */
   private createObjectId(): string {
     const id = `obj-${this.nextObjectNumber}`;
     this.nextObjectNumber += 1;
     return id;
   }
 
+  /** Allocates the next topmost z-index. */
   private allocateZIndex(): number {
     const z = this.nextZIndex;
     this.nextZIndex += 1;
     return z;
   }
 
+  /** Formats rectangle bounds for user-facing status text. */
   private describeRect(rect: Rect): string {
     return `${rect.left + 1},${rect.top + 1} → ${rect.right + 1},${rect.bottom + 1}`;
   }
 
+  /** Formats a line style label for user-facing status text. */
   private describeLineStyle(style: LineStyle): string {
     switch (style) {
       case "smooth":
@@ -2923,6 +2248,7 @@ export class DrawState {
     }
   }
 
+  /** Formats a box style label for user-facing status text. */
   private describeBoxStyle(style: BoxStyle): string {
     switch (style) {
       case "auto":
@@ -2936,6 +2262,7 @@ export class DrawState {
     }
   }
 
+  /** Formats a text border label for user-facing status text. */
   private describeTextBorderMode(mode: TextBorderMode): string {
     switch (mode) {
       case "none":
@@ -2949,6 +2276,7 @@ export class DrawState {
     }
   }
 
+  /** Formats an ink color label for user-facing status text. */
   private describeInkColor(color: InkColor): string {
     switch (color) {
       case "white":
@@ -2970,6 +2298,7 @@ export class DrawState {
     }
   }
 
+  /** Formats an object description for user-facing status text. */
   private describeObject(object: DrawObject): string {
     switch (object.type) {
       case "box":
@@ -2985,6 +2314,7 @@ export class DrawState {
     }
   }
 
+  /** Returns whether two objects have equivalent editable state. */
   private objectsEqual(a: DrawObject, b: DrawObject): boolean {
     if (a.type !== b.type) return false;
     if (a.parentId !== b.parentId) return false;
@@ -3021,6 +2351,7 @@ export class DrawState {
     }
   }
 
+  /** Returns whether two object lists are equal by id and editable state. */
   private objectListsEqual(a: DrawObject[], b: DrawObject[]): boolean {
     if (a.length !== b.length) return false;
 
@@ -3031,14 +2362,17 @@ export class DrawState {
     });
   }
 
+  /** Returns whether a canvas coordinate is inside the drawable area. */
   private isInsideCanvas(x: number, y: number): boolean {
     return x >= 0 && y >= 0 && x < this.canvasWidth && y < this.canvasHeight;
   }
 
+  /** Marks cached render buffers as stale. */
   private markSceneDirty(): void {
     this.sceneDirty = true;
   }
 
+  /** Updates the user-facing status message. */
   private setStatus(message: string): void {
     this.status = message;
   }
