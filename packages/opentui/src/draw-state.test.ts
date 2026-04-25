@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { MouseButton } from "@opentui/core";
-import { DrawState, TEXT_BORDER_MODES } from "./draw-state";
+import { DrawState, TEXT_BORDER_MODES, type DrawObject } from "./draw-state";
 
 /** Converts canvas-local coordinates into the pointer coordinates expected by `DrawState`. */
 function canvasPoint(state: DrawState, x: number, y: number) {
@@ -11,6 +11,39 @@ function canvasPoint(state: DrawState, x: number, y: number) {
 }
 
 describe("DrawState", () => {
+  test("loads a retained object document for non-interactive rendering", () => {
+    const state = new DrawState(20, 8);
+    const objects: DrawObject[] = [
+      {
+        id: "box",
+        z: 1,
+        parentId: null,
+        color: "white",
+        type: "box",
+        left: 0,
+        top: 0,
+        right: 5,
+        bottom: 2,
+        style: "light",
+      },
+      {
+        id: "label",
+        z: 2,
+        parentId: null,
+        color: "white",
+        type: "text",
+        x: 2,
+        y: 1,
+        content: "A",
+        border: "none",
+      },
+    ];
+
+    state.loadObjects(objects);
+
+    expect(state.exportArt()).toBe("┌────┐\n│ A  │\n└────┘");
+  });
+
   test("draws a straight line object with pointer events", () => {
     const state = new DrawState(20, 10);
     const start = canvasPoint(state, 0, 0);

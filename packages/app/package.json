@@ -53,6 +53,7 @@
     "pack:check": "bun run build && npm pack --dry-run --ignore-scripts",
     "prepack": "bun run build",
     "prepublishOnly": "bun run lint && bun run typecheck",
+    "test": "bun test",
     "typecheck": "tsc --noEmit",
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
@@ -63,6 +64,7 @@
     "@opentui/core": "^0.1.97",
     "@opentui/react": "^0.1.97",
     "@termdraw/opentui": "0.3.3",
+    "jsonc-parser": "^3.3.1",
     "react": "^19.2.5"
   },
   "devDependencies": {

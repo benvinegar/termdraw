@@ -29,6 +29,46 @@
 - `@termdraw/opentui` — embeddable OpenTUI components and renderables
 - `@termdraw/pi` — Pi package that opens termDRAW in a Pi overlay
 
+## Architecture
+
+```text
+╔══════════════════════════════════════════════════════════════════════════════════════════════╗
+║ termDRAW workspace                                                                           ║
+║ ┌──────────────────────────────────────────────────────────────────────────────────────────┐ ║
+║ │ workspace root                                                                           │ ║
+║ │  package.json scripts: format | lint | test | typecheck | build | smoke:pi               │ ║
+║ └──────────────────────────────────────────────────────────────────────────────────────────┘ ║
+║                                                                                              ║
+║                                ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓                               ║
+║ ┌────────────────────────┐     ┃ packages/opentui            ┃      ┌──────────────────────┐ ║
+║ │ packages/app           │     ┃                             ┃      │ packages/pi          │ ║
+║ │                        │     ┃  @termdraw/opentui          ┃      │                      │ ║
+║ │  @termdraw/app         │     ┃                             ┃      │  @termdraw/pi        │ ║
+║ │                        │     ┃  draw-state.ts              ┃      │                      │ ║
+║ │  src/cli.tsx           │     ┃     objects/tools/history   ┃      │  overlay.ts          │ ║
+║ │                        │────>┃                             ┃─────>│                      │ ║
+║ │  src/main.tsx          │     ┃  app.ts renderable          ┃      │  termdraw.island.tsx │ ║
+║ │                        │     ┃                             ┃      │                      │ ║
+║ │  TermDrawApp           │     ┃  app/input.ts keys+mouse    ┃      │  onSave bridge       │ ║
+║ │                        │     ┃                             ┃      │                      │ ║
+║ │                        │     ┃  app/render.ts canvas       ┃      │                      │ ║
+║ └────────────────────────┘     ┃                             ┃      └──────────────────────┘ ║
+║              │                 ┃  react.ts components        ┃                  │            ║
+║              │                 ┃                             ┃                  │            ║
+║              v                 ┃                             ┃                  v            ║
+║   ╔══════════════════════╗     ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛      ╔══════════════════════╗ ║
+║   ║ terminal CLI         ║                    v                     ║ Pi editor            ║ ║
+║   ║  stdout / --output   ║          ╔════════════════════╗          ║  insert saved art    ║ ║
+║   ║                      ║          ║ saved art          ║          ║                      ║ ║
+║   ╚══════════════════════╝          ║  plain or fenced   ║          ╚══════════════════════╝ ║
+║                                     ╚════════════════════╝                                   ║
+╚══════════════════════════════════════════════════════════════════════════════════════════════╝
+```
+
+- `packages/app` wraps the full OpenTUI app as the standalone `termdraw` CLI.
+- `packages/opentui` owns the reusable editor state, rendering, input handling, React bindings, and text export.
+- `packages/pi` embeds the editor through an island bridge and returns saved art to Pi.
+
 ## Install the app
 
 Requirements:
@@ -57,11 +97,36 @@ termdraw --output diagram.txt
 # export a fenced Markdown code block
 termdraw --fenced > diagram.md
 
+# render a JSONC diagram document without opening the editor
+termdraw compile docs/examples/service-flow.diagram.jsonc
+
 # show CLI help
 termdraw --help
 ```
 
 termDRAW! outputs terminal text, not SVG or bitmap graphics.
+
+## Compile diagrams from JSONC
+
+`termdraw compile` renders a compact diagram document through the same retained drawing model used by the interactive editor. It accepts a file path, `-`, or stdin.
+
+```jsonc
+{
+  "version": 1,
+  "size": [24, 5],
+  "objects": [
+    { "type": "box", "rect": [0, 0, 8, 2], "style": "light", "text": "CLI" },
+    { "type": "line", "from": [9, 1], "to": [14, 1], "style": "light", "marker": ">" },
+    { "type": "text", "at": [16, 1], "text": "text" },
+  ],
+}
+```
+
+```text
+┌───────┐
+│ CLI   │─────> text
+└───────┘
+```
 
 ## Use it in Pi
 

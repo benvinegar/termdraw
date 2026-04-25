@@ -9,7 +9,7 @@
     "dev": "cd packages/app && bun --watch run src/cli.tsx",
     "clean": "rm -rf dist packages/app/dist packages/opentui/dist",
     "build": "cd packages/opentui && bun run build && cd ../app && bun run build",
-    "test": "cd packages/opentui && bun test",
+    "test": "cd packages/opentui && bun test && cd ../app && bun test",
     "typecheck": "cd packages/opentui && bun run typecheck && cd ../app && bun run typecheck && cd ../pi && bun run typecheck",
     "pack:check": "cd packages/opentui && bun run pack:check && cd ../app && bun run pack:check && cd ../pi && bun run pack:check",
     "smoke:pi": "cd packages/pi && bun run smoke:pi",
