@@ -865,6 +865,25 @@ export class DrawState {
     this.setStatus(`Nothing to delete at ${this.cursorX + 1},${this.cursorY + 1}.`);
   }
 
+  /** Replaces the current document with a prebuilt retained object list. */
+  public loadObjects(objects: DrawObject[]): void {
+    this.setObjects(cloneObjects(objects));
+    this.setSelectedObjects([]);
+    this.activeTextObjectId = null;
+    this.textEntryArmed = false;
+    this.pendingSelection = null;
+    this.pendingLine = null;
+    this.pendingBox = null;
+    this.pendingPaint = null;
+    this.dragState = null;
+    this.eraseState = null;
+    this.undoStack = [];
+    this.redoStack = [];
+    this.nextObjectNumber = objects.length + 1;
+    this.nextZIndex = Math.max(0, ...objects.map((object) => object.z)) + 1;
+    this.setStatus("Loaded document objects.");
+  }
+
   /** Deletes the current selection and returns whether anything was removed. */
   public deleteSelectedObject(): boolean {
     const selected = this.getSelectedObjects();

@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "size": [42, 11],
+  "objects": [
+    {
+      "type": "box",
+      "id": "cli",
+      "rect": [0, 0, 13, 4],
+      "style": "light",
+      "text": "CLI",
+    },
+    {
+      "type": "box",
+      "id": "core",
+      "rect": [20, 0, 41, 4],
+      "style": "heavy",
+      "text": "DrawState",
+    },
+    {
+      "type": "line",
+      "from": [14, 2],
+      "to": [19, 2],
+      "style": "light",
+      "marker": ">",
+    },
+    {
+      "type": "text",
+      "at": [2, 7],
+      "text": "JSONC in",
+    },
+    {
+      "type": "line",
+      "from": [10, 7],
+      "to": [20, 7],
+      "style": "light",
+      "marker": ">",
+    },
+    {
+      "type": "text",
+      "at": [22, 7],
+      "text": "terminal text out",
+    },
+  ],
+}

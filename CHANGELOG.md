@@ -6,6 +6,8 @@ All notable user-visible changes to this project are documented in this file.
 
 ### Added
 
+- Added `termdraw compile` for rendering JSONC diagram documents through the termDRAW drawing model without opening the interactive editor.
+
 ### Changed
 
 ### Fixed

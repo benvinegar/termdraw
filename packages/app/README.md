@@ -37,11 +37,36 @@ termdraw --output diagram.txt
 # export a fenced Markdown code block
 termdraw --fenced > diagram.md
 
+# render a JSONC diagram document without opening the editor
+termdraw compile diagram.jsonc
+
 # show CLI help
 termdraw --help
 ```
 
 termDRAW! outputs terminal text, not SVG or bitmap graphics.
+
+## Compile diagrams from JSONC
+
+`termdraw compile` renders a compact diagram document through the same retained drawing model used by the interactive editor. It accepts a file path, `-`, or stdin.
+
+```jsonc
+{
+  "version": 1,
+  "size": [24, 5],
+  "objects": [
+    { "type": "box", "rect": [0, 0, 8, 2], "style": "light", "text": "CLI" },
+    { "type": "line", "from": [9, 1], "to": [14, 1], "style": "light", "marker": ">" },
+    { "type": "text", "at": [16, 1], "text": "text" },
+  ],
+}
+```
+
+```text
+┌───────┐
+│ CLI   │─────> text
+└───────┘
+```
 
 ## OpenTUI package
 
