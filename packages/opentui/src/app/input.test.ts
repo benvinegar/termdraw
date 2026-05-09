@@ -156,7 +156,7 @@ test("handleKeyPress invokes save on Ctrl+S", () => {
 test("handleKeyPress switches tools with hotkeys outside text entry", () => {
   let mode: string | null = null;
   let renders = 0;
-  const { event, wasPrevented } = createKeyEvent("b", { raw: "b" });
+  const { event, wasPrevented } = createKeyEvent("e", { raw: "e" });
 
   const handled = handleKeyPress({
     key: event as never,
@@ -178,7 +178,7 @@ test("handleKeyPress switches tools with hotkeys outside text entry", () => {
 
   expect(handled).toBe(true);
   expect(wasPrevented()).toBe(true);
-  expect(mode === "paint").toBe(true);
+  expect(mode === "elbow").toBe(true);
   expect(renders).toBe(1);
 });
 
@@ -217,7 +217,7 @@ test("handleKeyPress cycles line styles with bracket keys", () => {
   const { event: leftKey } = createKeyEvent("[", { raw: "[" });
   const { event: rightKey } = createKeyEvent("]", { raw: "]" });
   const state = createMockState({
-    currentMode: "line",
+    currentMode: "elbow",
     cycleLineStyle: (delta: number) => {
       cycles.push(delta);
     },

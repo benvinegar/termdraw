@@ -458,13 +458,14 @@ export function buildHelpText(binaryName = "termdraw"): string {
   return truncateToCells(
     `${binaryName} [--load file.td.json|-] [--output file] [--fenced|--plain]\n\n` +
       `Controls:\n` +
-      `  right palette   click Select / Box / Line / Brush / Text, box styles, and colors\n` +
-      `  Ctrl+T / Tab    cycle select / box / line / brush / text\n` +
-      `  B / A / U / P / T switch to Brush / Select / Box / Line / Text outside text entry\n` +
+      `  right palette   click Select / Box / Line / Elbow / Brush / Text, box styles, and colors\n` +
+      `  Ctrl+T / Tab    cycle select / box / line / elbow / brush / text\n` +
+      `  B / A / U / P / E / T switch to Brush / Select / Box / Line / Elbow / Text outside text entry\n` +
       `  select tool     click to select, drag empty space to marquee-select multiple objects\n` +
       `  click objects   select and move them\n` +
       `  drag handles    resize boxes / adjust line endpoints\n` +
       `  line tool       choose Smooth (Braille-aware), Single, or Double line stencils\n` +
+      `  elbow tool      create right-angle connectors with arrowheads using line stencils\n` +
       `  text tool       choose No border, Single, Double, or Dashed textbox borders\n` +
       `  Shift + drag    constrain line creation/editing to horizontal or vertical\n` +
       `  selected text   shows a virtual selection box\n` +
@@ -473,8 +474,8 @@ export function buildHelpText(binaryName = "termdraw"): string {
       `  Ctrl+Q          quit\n` +
       `  Ctrl+Z / Ctrl+Y undo / redo\n` +
       `  Ctrl+X          clear canvas\n` +
-      `  [ / ]           cycle box style in Box mode, line style in Line mode, text border in Text mode, or brush in Brush mode\n` +
-      `  mouse wheel     cycle box style in Box mode, line style in Line mode, or brush in Brush mode\n` +
+      `  [ / ]           cycle box style in Box mode, line style in Line/Elbow mode, text border in Text mode, or brush in Brush mode\n` +
+      `  mouse wheel     cycle box style in Box mode, line style in Line/Elbow mode, or brush in Brush mode\n` +
       `  brush tool      choose from preset brush stencils in the palette\n` +
       `  Space           stamp a line point or current brush / insert space in Text mode\n` +
       `  Enter / Ctrl+S  export art\n` +

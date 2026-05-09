@@ -51,8 +51,8 @@ function applyStyleButtonSelection(state: DrawState, style: string): void {
     return;
   }
 
-  if (state.currentMode === "line") {
-    state.setMode("line");
+  if (state.currentMode === "line" || state.currentMode === "elbow") {
+    state.setMode(state.currentMode);
     state.setLineStyle(style as LineStyle);
     return;
   }
@@ -312,7 +312,7 @@ export function handleKeyPress(
     }
   }
 
-  if (state.currentMode === "line") {
+  if (state.currentMode === "line" || state.currentMode === "elbow") {
     if (key.raw === "[") {
       key.preventDefault();
       state.cycleLineStyle(-1);

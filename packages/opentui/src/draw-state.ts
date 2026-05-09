@@ -19,6 +19,7 @@ import {
 import {
   appendPaintSegment,
   constrainLinePoint,
+  getElbowRenderCharacters,
   getLineRenderCharacters,
   mergeUniquePoints,
   pointFromKey,
@@ -76,6 +77,7 @@ import {
   type DrawDocument,
   type DrawMode,
   type DrawObject,
+  type ElbowObject,
   type EraseState,
   type HandleHit,
   type InkColor,
@@ -219,6 +221,19 @@ function parseDocumentObject(value: unknown, index: number): DrawObject {
         y2: readInteger(value.y2, `${label}.y2`),
         style: readEnumValue(value.style, `${label}.style`, LINE_STYLES),
       } satisfies LineObject;
+    case "elbow":
+      return {
+        id,
+        type,
+        z,
+        parentId,
+        color,
+        x1: readInteger(value.x1, `${label}.x1`),
+        y1: readInteger(value.y1, `${label}.y1`),
+        x2: readInteger(value.x2, `${label}.x2`),
+        y2: readInteger(value.y2, `${label}.y2`),
+        style: readEnumValue(value.style, `${label}.style`, LINE_STYLES),
+      } satisfies ElbowObject;
     case "paint": {
       const pointsValue = value.points;
       if (!Array.isArray(pointsValue) || pointsValue.length === 0) {
@@ -478,7 +493,7 @@ export class DrawState {
         this.cycleBrush(direction);
       } else if (this.mode === "box") {
         this.cycleBoxStyle(direction);
-      } else if (this.mode === "line") {
+      } else if (this.mode === "line" || this.mode === "elbow") {
         this.cycleLineStyle(direction);
       }
       return;
@@ -596,6 +611,7 @@ export class DrawState {
         );
         return;
       case "line":
+      case "elbow":
         this.setSelectedObjects([]);
         this.activeTextObjectId = null;
         this.pendingLine = {
@@ -603,7 +619,9 @@ export class DrawState {
           end: { x: canvasX, y: canvasY },
         };
         this.setStatus(
-          `Line start at ${canvasX + 1},${canvasY + 1}. Drag to endpoint, hold Shift to constrain, release to commit.`,
+          this.mode === "elbow"
+            ? `Elbow start at ${canvasX + 1},${canvasY + 1}. Drag to endpoint, hold Shift to constrain, release to commit.`
+            : `Line start at ${canvasX + 1},${canvasY + 1}. Drag to endpoint, hold Shift to constrain, release to commit.`,
         );
         return;
       case "paint":
@@ -628,6 +646,8 @@ export class DrawState {
         return "SELECT";
       case "line":
         return "LINE";
+      case "elbow":
+        return "ELBOW";
       case "box":
         return "BOX";
       case "paint":
@@ -871,7 +891,7 @@ export class DrawState {
 
   /** Advances to the next drawing mode in the standard tool order. */
   public cycleMode(): void {
-    const order: DrawMode[] = ["select", "box", "line", "paint", "text"];
+    const order: DrawMode[] = ["select", "box", "line", "elbow", "paint", "text"];
     const currentIndex = order.indexOf(this.mode);
     const next = order[(currentIndex + 1) % order.length] ?? "line";
     this.setMode(next);
@@ -898,6 +918,10 @@ export class DrawState {
     } else if (next === "line") {
       this.setStatus(
         `Line mode (${this.describeLineStyle(this.lineStyle)}): drag on empty space to create a line. Hold Shift to constrain horizontal/vertical. Click objects to move them, or line endpoints to adjust.`,
+      );
+    } else if (next === "elbow") {
+      this.setStatus(
+        `Elbow mode (${this.describeLineStyle(this.lineStyle)}): drag on empty space to create a right-angle connector with an arrow. Hold Shift to constrain horizontal/vertical. Click objects to move them, or endpoints to adjust.`,
       );
     } else if (next === "box") {
       this.setStatus(
@@ -1393,20 +1417,21 @@ export class DrawState {
     if (this.pendingLine) {
       const start = this.pendingLine.start;
       const end = this.pendingLine.end;
+      const isElbow = this.mode === "elbow";
       this.pendingLine = null;
 
       if (start.x === end.x && start.y === end.y) {
-        this.setStatus(`Line cancelled at ${start.x + 1},${start.y + 1}.`);
+        this.setStatus(`${isElbow ? "Elbow" : "Line"} cancelled at ${start.x + 1},${start.y + 1}.`);
         return;
       }
 
       this.pushUndo();
-      const object: LineObject = {
+      const object: LineObject | ElbowObject = {
         id: this.createObjectId(),
         z: this.allocateZIndex(),
         parentId: null,
         color: this.inkColor,
-        type: "line",
+        type: isElbow ? "elbow" : "line",
         x1: start.x,
         y1: start.y,
         x2: end.x,
@@ -1745,6 +1770,18 @@ export class DrawState {
           }
           break;
         }
+        case "elbow": {
+          const rendered = getElbowRenderCharacters(
+            { x: object.x1, y: object.y1 },
+            { x: object.x2, y: object.y2 },
+            object.style,
+          );
+          for (const [key, char] of rendered) {
+            const { x, y } = pointFromKey(key);
+            this.paintRenderCell(x, y, char, object.color);
+          }
+          break;
+        }
         case "paint": {
           for (const point of object.points) {
             this.paintRenderCell(point.x, point.y, object.brush, object.color);
@@ -1813,16 +1850,17 @@ export class DrawState {
     );
   }
 
-  /** Builds the preview overlay for an in-progress line drag. */
+  /** Builds the preview overlay for an in-progress line or elbow drag. */
   private getLinePreviewCharacters(): Map<string, string> {
     const preview = new Map<string, string>();
     if (!this.pendingLine) return preview;
 
-    for (const [key, char] of getLineRenderCharacters(
-      this.pendingLine.start,
-      this.pendingLine.end,
-      this.lineStyle,
-    )) {
+    const rendered =
+      this.mode === "elbow"
+        ? getElbowRenderCharacters(this.pendingLine.start, this.pendingLine.end, this.lineStyle)
+        : getLineRenderCharacters(this.pendingLine.start, this.pendingLine.end, this.lineStyle);
+
+    for (const [key, char] of rendered) {
       const { x, y } = pointFromKey(key);
       if (!this.isInsideCanvas(x, y)) continue;
       preview.set(key, char);
@@ -2112,7 +2150,7 @@ export class DrawState {
         }
       }
 
-      if (object.type === "line") {
+      if (object.type === "line" || object.type === "elbow") {
         for (const [endpoint, point] of Object.entries(getLineEndpointPoints(object)) as [
           LineEndpointHandle,
           Point,
@@ -2254,7 +2292,8 @@ export class DrawState {
     }
 
     switch (object.type) {
-      case "line": {
+      case "line":
+      case "elbow": {
         const start = this.mapPointBetweenRects(
           { x: object.x1, y: object.y1 },
           originalContentBounds,
@@ -2368,12 +2407,12 @@ export class DrawState {
   }
 
   /** Moves one endpoint of a line while honoring canvas bounds and axis constraints. */
-  private adjustLineEndpointWithinCanvas(
-    line: LineObject,
+  private adjustLineEndpointWithinCanvas<TLine extends LineObject | ElbowObject>(
+    line: TLine,
     endpoint: LineEndpointHandle,
     point: Point,
     constrainLineAxis = false,
-  ): LineObject {
+  ): TLine {
     const clampedPoint = this.clampPointInsideCanvas(point);
     const anchor = endpoint === "start" ? { x: line.x2, y: line.y2 } : { x: line.x1, y: line.y1 };
     const nextPoint = constrainLineAxis ? constrainLinePoint(anchor, clampedPoint) : clampedPoint;
@@ -2383,14 +2422,14 @@ export class DrawState {
         ...line,
         x1: nextPoint.x,
         y1: nextPoint.y,
-      };
+      } as TLine;
     }
 
     return {
       ...line,
       x2: nextPoint.x,
       y2: nextPoint.y,
-    };
+    } as TLine;
   }
 
   /** Returns the fixed anchor corner opposite the dragged resize handle. */
@@ -2589,6 +2628,8 @@ export class DrawState {
         return `box ${this.describeRect(object)}`;
       case "line":
         return `line ${object.x1 + 1},${object.y1 + 1} → ${object.x2 + 1},${object.y2 + 1}`;
+      case "elbow":
+        return `elbow ${object.x1 + 1},${object.y1 + 1} → ${object.x2 + 1},${object.y2 + 1}`;
       case "paint": {
         const bounds = getObjectBounds(object);
         return `brush stroke ${this.describeRect(bounds)}`;
@@ -2614,6 +2655,7 @@ export class DrawState {
           a.style === (b as BoxObject).style
         );
       case "line":
+      case "elbow":
         return (
           a.x1 === (b as LineObject).x1 &&
           a.y1 === (b as LineObject).y1 &&

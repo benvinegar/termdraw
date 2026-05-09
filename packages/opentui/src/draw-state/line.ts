@@ -7,6 +7,35 @@
 import { clamp, normalizeRect } from "./geometry.js";
 import type { LineStyle, Point } from "./types.js";
 
+function getOrthogonalLineGlyphs(style: LineStyle): {
+  horizontal: string;
+  vertical: string;
+  cornerNE: string;
+  cornerNW: string;
+  cornerSE: string;
+  cornerSW: string;
+} {
+  if (style === "double") {
+    return {
+      horizontal: "═",
+      vertical: "║",
+      cornerNE: "╚",
+      cornerNW: "╝",
+      cornerSE: "╔",
+      cornerSW: "╗",
+    };
+  }
+
+  return {
+    horizontal: style === "light" ? "─" : "─",
+    vertical: style === "light" ? "│" : "│",
+    cornerNE: "└",
+    cornerNW: "┘",
+    cornerSE: "┌",
+    cornerSW: "┐",
+  };
+}
+
 const BRAILLE_DOT_MASKS = [
   [0x1, 0x8],
   [0x2, 0x10],
@@ -154,6 +183,42 @@ export function getLineRenderCharacters(
   return rendered;
 }
 
+export function getElbowRenderCharacters(
+  start: Point,
+  end: Point,
+  style: LineStyle = "smooth",
+): Map<string, string> {
+  const rendered = new Map<string, string>();
+  const { horizontal, vertical, cornerNE, cornerNW, cornerSE, cornerSW } =
+    getOrthogonalLineGlyphs(style);
+
+  const corner = { x: end.x, y: start.y };
+
+  for (const point of getLinePoints(start.x, start.y, corner.x, corner.y)) {
+    rendered.set(`${point.x},${point.y}`, horizontal);
+  }
+  for (const point of getLinePoints(corner.x, corner.y, end.x, end.y)) {
+    rendered.set(`${point.x},${point.y}`, vertical);
+  }
+
+  if (start.x !== end.x && start.y !== end.y) {
+    const cornerGlyph =
+      end.x > start.x
+        ? end.y > start.y
+          ? cornerSE
+          : cornerNE
+        : end.y > start.y
+          ? cornerSW
+          : cornerNW;
+    rendered.set(`${corner.x},${corner.y}`, cornerGlyph);
+  }
+
+  const arrow = end.y > start.y ? "v" : end.y < start.y ? "^" : end.x > start.x ? ">" : "<";
+  rendered.set(`${end.x},${end.y}`, arrow);
+  rendered.set(`${start.x},${start.y}`, start.x === corner.x ? vertical : horizontal);
+  return rendered;
+}
+
 /** Parses a `"x,y"` map key back into a point. */
 export function pointFromKey(key: string): Point {
   const [xText = "0", yText = "0"] = key.split(",");
@@ -166,6 +231,15 @@ export function pointFromKey(key: string): Point {
 /** Returns the rendered cell coordinates occupied by a line. */
 export function getLineRenderCells(start: Point, end: Point, style: LineStyle = "smooth"): Point[] {
   return [...getLineRenderCharacters(start, end, style).keys()].map((key) => pointFromKey(key));
+}
+
+/** Returns the rendered cell coordinates occupied by an elbow connector. */
+export function getElbowRenderCells(
+  start: Point,
+  end: Point,
+  style: LineStyle = "smooth",
+): Point[] {
+  return [...getElbowRenderCharacters(start, end, style).keys()].map((key) => pointFromKey(key));
 }
 
 /** Returns Bresenham points for the line segment between the endpoints. */

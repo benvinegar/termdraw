@@ -61,7 +61,7 @@ export function isInsideRect(
 /** Returns the number of style rows rendered beneath the active tool. */
 export function getContextualStyleRowCount(currentMode: DrawMode): number {
   if (currentMode === "box") return BOX_STYLE_OPTIONS.length;
-  if (currentMode === "line") return LINE_STYLE_OPTIONS.length;
+  if (currentMode === "line" || currentMode === "elbow") return LINE_STYLE_OPTIONS.length;
   if (currentMode === "paint") return BRUSH_OPTIONS.length;
   if (currentMode === "text") return TEXT_BORDER_OPTIONS.length;
   return 0;
@@ -79,6 +79,7 @@ export function getToolButtons(layout: AppLayout, currentMode: DrawMode): ToolBu
     { mode: "select", icon: "◎", label: "Select", color: COLORS.select },
     { mode: "box", icon: "▣", label: "Box", color: COLORS.warning },
     { mode: "line", icon: "╱", label: "Line", color: COLORS.accent },
+    { mode: "elbow", icon: "└", label: "Elbow", color: COLORS.accent },
     { mode: "paint", icon: "▒", label: "Brush", color: COLORS.paint },
     { mode: "text", icon: "T", label: "Text", color: COLORS.success },
   ];
@@ -109,6 +110,7 @@ export function getContextualStyleButtons(layout: AppLayout, currentMode: DrawMo
   if (
     currentMode !== "box" &&
     currentMode !== "line" &&
+    currentMode !== "elbow" &&
     currentMode !== "paint" &&
     currentMode !== "text"
   ) {
@@ -124,7 +126,7 @@ export function getContextualStyleButtons(layout: AppLayout, currentMode: DrawMo
   const options =
     currentMode === "box"
       ? BOX_STYLE_OPTIONS
-      : currentMode === "line"
+      : currentMode === "line" || currentMode === "elbow"
         ? LINE_STYLE_OPTIONS
         : currentMode === "text"
           ? TEXT_BORDER_OPTIONS

@@ -20,7 +20,7 @@ export const INK_COLORS = [
 export const TEXT_BORDER_MODES = ["none", "single", "double", "underline"] as const;
 export const DRAW_DOCUMENT_VERSION = 1 as const;
 
-export type DrawMode = "select" | "box" | "line" | "paint" | "text";
+export type DrawMode = "select" | "box" | "line" | "elbow" | "paint" | "text";
 export type BoxStyle = (typeof BOX_STYLES)[number];
 export type LineStyle = (typeof LINE_STYLES)[number];
 export type InkColor = (typeof INK_COLORS)[number];
@@ -69,6 +69,15 @@ export type LineObject = BaseDrawObject & {
   style: LineStyle;
 };
 
+export type ElbowObject = BaseDrawObject & {
+  type: "elbow";
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  style: LineStyle;
+};
+
 export type PaintObject = BaseDrawObject & {
   type: "paint";
   points: Point[];
@@ -83,7 +92,7 @@ export type TextObject = BaseDrawObject & {
   border: TextBorderMode;
 };
 
-export type DrawObject = BoxObject | LineObject | PaintObject | TextObject;
+export type DrawObject = BoxObject | LineObject | ElbowObject | PaintObject | TextObject;
 export type DrawDocument = {
   version: typeof DRAW_DOCUMENT_VERSION;
   objects: DrawObject[];
@@ -130,7 +139,7 @@ export type LineEndpointDragState = {
   kind: "line-endpoint";
   objectId: string;
   startMouse: Point;
-  originalObject: LineObject;
+  originalObject: LineObject | ElbowObject;
   endpoint: LineEndpointHandle;
   pushedUndo: boolean;
 };
@@ -150,7 +159,7 @@ export type HandleHit =
     }
   | {
       kind: "line-endpoint";
-      object: LineObject;
+      object: LineObject | ElbowObject;
       endpoint: LineEndpointHandle;
     };
 

@@ -113,6 +113,7 @@ const INK_COLOR_VALUES: Record<InkColor, RGBA> = {
 export const TOOL_HOTKEYS: Partial<Record<string, DrawMode>> = {
   a: "select",
   b: "paint",
+  e: "elbow",
   p: "line",
   t: "text",
   u: "box",

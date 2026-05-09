@@ -5,12 +5,13 @@
  * point hit testing, and object translation utilities for the retained scene model.
  */
 import { normalizeRect } from "./geometry.js";
-import { getLineRenderCells } from "./line.js";
+import { getElbowRenderCells, getLineRenderCells } from "./line.js";
 import { getTextRenderRect, getTextSelectionBounds, visibleCellCount } from "../text.js";
 import type {
   BoxObject,
   BoxResizeHandle,
   DrawObject,
+  ElbowObject,
   LineEndpointHandle,
   LineObject,
   Point,
@@ -40,6 +41,8 @@ export function getObjectBounds(object: DrawObject): Rect {
     case "box":
       return { left: object.left, top: object.top, right: object.right, bottom: object.bottom };
     case "line":
+      return normalizeRect({ x: object.x1, y: object.y1 }, { x: object.x2, y: object.y2 });
+    case "elbow":
       return normalizeRect({ x: object.x1, y: object.y1 }, { x: object.x2, y: object.y2 });
     case "paint": {
       const [firstPoint] = object.points;
@@ -115,7 +118,9 @@ export function getBoxCornerPoints(box: BoxObject): Record<BoxResizeHandle, Poin
 }
 
 /** Returns the editable endpoint-handle locations for a line. */
-export function getLineEndpointPoints(line: LineObject): Record<LineEndpointHandle, Point> {
+export function getLineEndpointPoints(
+  line: LineObject | ElbowObject,
+): Record<LineEndpointHandle, Point> {
   return {
     start: { x: line.x1, y: line.y1 },
     end: { x: line.x2, y: line.y2 },
@@ -144,6 +149,12 @@ export function getObjectRenderCells(object: DrawObject): Point[] {
     }
     case "line":
       return getLineRenderCells(
+        { x: object.x1, y: object.y1 },
+        { x: object.x2, y: object.y2 },
+        object.style,
+      );
+    case "elbow":
+      return getElbowRenderCells(
         { x: object.x1, y: object.y1 },
         { x: object.x2, y: object.y2 },
         object.style,
@@ -182,6 +193,14 @@ export function translateObject(object: DrawObject, dx: number, dy: number): Dra
         y1: object.y1 + dy,
         y2: object.y2 + dy,
       };
+    case "elbow":
+      return {
+        ...object,
+        x1: object.x1 + dx,
+        x2: object.x2 + dx,
+        y1: object.y1 + dy,
+        y2: object.y2 + dy,
+      };
     case "paint":
       return {
         ...object,
@@ -207,6 +226,12 @@ export function objectContainsPoint(object: DrawObject, x: number, y: number): b
     }
     case "line":
       return getLineRenderCells(
+        { x: object.x1, y: object.y1 },
+        { x: object.x2, y: object.y2 },
+        object.style,
+      ).some((point) => point.x === x && point.y === y);
+    case "elbow":
+      return getElbowRenderCells(
         { x: object.x1, y: object.y1 },
         { x: object.x2, y: object.y2 },
         object.style,

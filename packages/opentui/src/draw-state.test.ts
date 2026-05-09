@@ -110,6 +110,31 @@ describe("DrawState", () => {
     expect(state.getCompositeCell(12, 6)).toBe(" ");
   });
 
+  test("elbow tool keeps a live orthogonal preview and commits with an arrowhead", () => {
+    const state = new DrawState(24, 16);
+    state.setMode("elbow");
+
+    const start = canvasPoint(state, 1, 1);
+    const end = canvasPoint(state, 6, 4);
+    state.handlePointerEvent({ type: "down", button: MouseButton.LEFT, ...start });
+    state.handlePointerEvent({ type: "drag", button: MouseButton.LEFT, ...end });
+
+    const preview = state.getActivePreviewCharacters();
+    expect(preview.get("1,1")).toBe("─");
+    expect(preview.get("5,1")).toBe("─");
+    expect(preview.get("6,1")).toBe("┌");
+    expect(preview.get("6,2")).toBe("│");
+    expect(preview.get("6,4")).toBe("v");
+
+    state.handlePointerEvent({ type: "up", button: MouseButton.LEFT, ...end });
+
+    expect(state.getCompositeCell(1, 1)).toBe("─");
+    expect(state.getCompositeCell(5, 1)).toBe("─");
+    expect(state.getCompositeCell(6, 1)).toBe("┌");
+    expect(state.getCompositeCell(6, 2)).toBe("│");
+    expect(state.getCompositeCell(6, 4)).toBe("v");
+  });
+
   test("clicking empty space in line mode does not create a one-cell line", () => {
     const state = new DrawState(20, 10);
     state.setMode("box");

@@ -123,7 +123,7 @@ function drawHeaderRow(
   const modeColor =
     state.currentMode === "select"
       ? COLORS.select
-      : state.currentMode === "line"
+      : state.currentMode === "line" || state.currentMode === "elbow"
         ? COLORS.accent
         : state.currentMode === "box"
           ? COLORS.warning
@@ -156,7 +156,7 @@ function drawHeaderRow(
       COLORS.warning,
       COLORS.panel,
     );
-  } else if (state.currentMode === "line") {
+  } else if (state.currentMode === "line" || state.currentMode === "elbow") {
     const lineStyle =
       LINE_STYLE_OPTIONS.find((option) => option.style === state.currentLineStyle) ??
       LINE_STYLE_OPTIONS[0]!;
@@ -228,7 +228,7 @@ function drawFooterRow(
 ): void {
   const text =
     footerTextOverride ??
-    `B Brush • A Select • U Box • P Line • T Text • Esc Deselect • Enter/Ctrl+S Export Art${
+    `B Brush • A Select • U Box • P Line • E Elbow • T Text • Esc Deselect • Enter/Ctrl+S Export Art${
       canSaveDiagram ? " • Ctrl+D Save Diagram" : ""
     } • Ctrl+Q Quit`;
   const combined = `${text}  ${status}`;
@@ -321,7 +321,7 @@ function drawStyleButton(
   const isActive =
     state.currentMode === "box"
       ? state.currentBoxStyle === button.style
-      : state.currentMode === "line"
+      : state.currentMode === "line" || state.currentMode === "elbow"
         ? state.currentLineStyle === button.style
         : state.currentMode === "text"
           ? state.currentTextBorderMode === button.style
