@@ -23,6 +23,7 @@ export const DRAW_DOCUMENT_VERSION = 1 as const;
 export type DrawMode = "select" | "box" | "line" | "elbow" | "paint" | "text";
 export type BoxStyle = (typeof BOX_STYLES)[number];
 export type LineStyle = (typeof LINE_STYLES)[number];
+export type ElbowOrientation = "horizontal-first" | "vertical-first";
 export type InkColor = (typeof INK_COLORS)[number];
 export type TextBorderMode = (typeof TEXT_BORDER_MODES)[number];
 
@@ -76,6 +77,7 @@ export type ElbowObject = BaseDrawObject & {
   x2: number;
   y2: number;
   style: LineStyle;
+  orientation: ElbowOrientation;
 };
 
 export type PaintObject = BaseDrawObject & {
@@ -113,7 +115,7 @@ export type Snapshot = {
 
 export type PendingSelection = { start: Point; end: Point };
 export type PendingBox = { start: Point; end: Point };
-export type PendingLine = { start: Point; end: Point };
+export type PendingLine = { start: Point; end: Point; orientation: ElbowOrientation };
 export type PendingPaint = { points: Point[]; lastPoint: Point };
 
 export type MoveDragState = {

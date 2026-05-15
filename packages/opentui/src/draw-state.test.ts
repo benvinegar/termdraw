@@ -122,7 +122,7 @@ describe("DrawState", () => {
     const preview = state.getActivePreviewCharacters();
     expect(preview.get("1,1")).toBe("─");
     expect(preview.get("5,1")).toBe("─");
-    expect(preview.get("6,1")).toBe("┌");
+    expect(preview.get("6,1")).toBe("┐");
     expect(preview.get("6,2")).toBe("│");
     expect(preview.get("6,4")).toBe("v");
 
@@ -130,9 +130,82 @@ describe("DrawState", () => {
 
     expect(state.getCompositeCell(1, 1)).toBe("─");
     expect(state.getCompositeCell(5, 1)).toBe("─");
-    expect(state.getCompositeCell(6, 1)).toBe("┌");
+    expect(state.getCompositeCell(6, 1)).toBe("┐");
     expect(state.getCompositeCell(6, 2)).toBe("│");
     expect(state.getCompositeCell(6, 4)).toBe("v");
+  });
+
+  test("R route toggle makes new elbows vertical-first for horizontal arrowheads", () => {
+    const state = new DrawState(24, 16);
+    state.setMode("elbow");
+    state.toggleElbowOrientation();
+
+    const start = canvasPoint(state, 1, 1);
+    const end = canvasPoint(state, 6, 4);
+    state.handlePointerEvent({ type: "down", button: MouseButton.LEFT, ...start });
+    state.handlePointerEvent({ type: "drag", button: MouseButton.LEFT, ...end });
+    state.handlePointerEvent({ type: "up", button: MouseButton.LEFT, ...end });
+
+    expect(state.getCompositeCell(1, 1)).toBe("│");
+    expect(state.getCompositeCell(1, 4)).toBe("└");
+    expect(state.getCompositeCell(6, 4)).toBe(">");
+    const [object] = state.exportDocument().objects;
+    expect(object?.type).toBe("elbow");
+    expect(object?.type === "elbow" ? object.orientation : null).toBe("vertical-first");
+  });
+
+  test("holding Shift routes new elbows vertical-first for horizontal arrowheads", () => {
+    const state = new DrawState(24, 16);
+    state.setMode("elbow");
+
+    const start = canvasPoint(state, 1, 1);
+    const end = canvasPoint(state, 6, 4);
+    state.handlePointerEvent({ type: "down", button: MouseButton.LEFT, ...start });
+    state.handlePointerEvent({ type: "drag", button: MouseButton.LEFT, shift: true, ...end });
+
+    const preview = state.getActivePreviewCharacters();
+    expect(preview.get("1,1")).toBe("│");
+    expect(preview.get("1,3")).toBe("│");
+    expect(preview.get("1,4")).toBe("└");
+    expect(preview.get("5,4")).toBe("─");
+    expect(preview.get("6,4")).toBe(">");
+
+    state.handlePointerEvent({ type: "up", button: MouseButton.LEFT, shift: true, ...end });
+
+    expect(state.getCompositeCell(1, 1)).toBe("│");
+    expect(state.getCompositeCell(1, 3)).toBe("│");
+    expect(state.getCompositeCell(1, 4)).toBe("└");
+    expect(state.getCompositeCell(5, 4)).toBe("─");
+    expect(state.getCompositeCell(6, 4)).toBe(">");
+    const [object] = state.exportDocument().objects;
+    expect(object?.type).toBe("elbow");
+    expect(object?.type === "elbow" ? object.orientation : null).toBe("vertical-first");
+  });
+
+  test("elbow tool uses corner glyphs that face the connected segments", () => {
+    const state = new DrawState(24, 24);
+    state.setMode("elbow");
+
+    const drawElbow = (
+      startPoint: { x: number; y: number },
+      endPoint: { x: number; y: number },
+    ) => {
+      const start = canvasPoint(state, startPoint.x, startPoint.y);
+      const end = canvasPoint(state, endPoint.x, endPoint.y);
+      state.handlePointerEvent({ type: "down", button: MouseButton.LEFT, ...start });
+      state.handlePointerEvent({ type: "drag", button: MouseButton.LEFT, ...end });
+      state.handlePointerEvent({ type: "up", button: MouseButton.LEFT, ...end });
+    };
+
+    drawElbow({ x: 1, y: 1 }, { x: 5, y: 4 });
+    drawElbow({ x: 10, y: 4 }, { x: 14, y: 1 });
+    drawElbow({ x: 10, y: 6 }, { x: 6, y: 9 });
+    drawElbow({ x: 5, y: 14 }, { x: 1, y: 11 });
+
+    expect(state.getCompositeCell(5, 1)).toBe("┐");
+    expect(state.getCompositeCell(14, 4)).toBe("┘");
+    expect(state.getCompositeCell(6, 6)).toBe("┌");
+    expect(state.getCompositeCell(1, 14)).toBe("└");
   });
 
   test("clicking empty space in line mode does not create a one-cell line", () => {

@@ -327,6 +327,13 @@ export function handleKeyPress(
       return true;
     }
 
+    if (state.currentMode === "elbow" && name === "r") {
+      key.preventDefault();
+      state.toggleElbowOrientation();
+      requestRender();
+      return true;
+    }
+
     if (name === "space") {
       key.preventDefault();
       state.stampBrushAtCursor();

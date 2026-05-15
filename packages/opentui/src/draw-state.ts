@@ -78,6 +78,7 @@ import {
   type DrawMode,
   type DrawObject,
   type ElbowObject,
+  type ElbowOrientation,
   type EraseState,
   type HandleHit,
   type InkColor,
@@ -233,6 +234,10 @@ function parseDocumentObject(value: unknown, index: number): DrawObject {
         x2: readInteger(value.x2, `${label}.x2`),
         y2: readInteger(value.y2, `${label}.y2`),
         style: readEnumValue(value.style, `${label}.style`, LINE_STYLES),
+        orientation:
+          value.orientation === "vertical-first" || value.orientation === "horizontal-first"
+            ? value.orientation
+            : "horizontal-first",
       } satisfies ElbowObject;
     case "paint": {
       const pointsValue = value.points;
@@ -335,6 +340,7 @@ export class DrawState {
   private boxStyleIndex = 0;
   private lineStyle = LINE_STYLES[0] as LineStyle;
   private lineStyleIndex = 0;
+  private elbowOrientation: ElbowOrientation = "horizontal-first";
   private textBorderMode = TEXT_BORDER_MODES[0] as TextBorderMode;
   private textBorderModeIndex = 0;
   private inkColor = INK_COLORS[0] as InkColor;
@@ -386,6 +392,10 @@ export class DrawState {
 
   public get currentLineStyle(): LineStyle {
     return this.lineStyle;
+  }
+
+  public get currentElbowOrientation(): ElbowOrientation {
+    return this.elbowOrientation;
   }
 
   public get currentTextBorderMode(): TextBorderMode {
@@ -538,10 +548,18 @@ export class DrawState {
       }
 
       if (this.pendingLine) {
+        const isElbow = this.mode === "elbow";
         const nextPoint =
-          event.shift === true ? constrainLinePoint(this.pendingLine.start, point) : point;
+          event.shift === true && !isElbow
+            ? constrainLinePoint(this.pendingLine.start, point)
+            : point;
         this.pendingLine.end = nextPoint;
-        this.setStatus(`Sizing line to ${nextPoint.x + 1},${nextPoint.y + 1}.`);
+        this.pendingLine.orientation = this.getElbowOrientationFromModifier(event.shift === true);
+        this.setStatus(
+          isElbow
+            ? `Sizing elbow to ${nextPoint.x + 1},${nextPoint.y + 1} (${this.describeElbowOrientation(this.pendingLine.orientation)}).`
+            : `Sizing line to ${nextPoint.x + 1},${nextPoint.y + 1}.`,
+        );
         return;
       }
 
@@ -617,10 +635,11 @@ export class DrawState {
         this.pendingLine = {
           start: { x: canvasX, y: canvasY },
           end: { x: canvasX, y: canvasY },
+          orientation: this.elbowOrientation,
         };
         this.setStatus(
           this.mode === "elbow"
-            ? `Elbow start at ${canvasX + 1},${canvasY + 1}. Drag to endpoint, hold Shift to constrain, release to commit.`
+            ? `Elbow start at ${canvasX + 1},${canvasY + 1}. Drag to endpoint, hold Shift to route vertical-first, release to commit.`
             : `Line start at ${canvasX + 1},${canvasY + 1}. Drag to endpoint, hold Shift to constrain, release to commit.`,
         );
         return;
@@ -921,7 +940,7 @@ export class DrawState {
       );
     } else if (next === "elbow") {
       this.setStatus(
-        `Elbow mode (${this.describeLineStyle(this.lineStyle)}): drag on empty space to create a right-angle connector with an arrow. Hold Shift to constrain horizontal/vertical. Click objects to move them, or endpoints to adjust.`,
+        `Elbow mode (${this.describeLineStyle(this.lineStyle)}, ${this.describeElbowOrientation(this.elbowOrientation)}): drag on empty space to create a right-angle connector with an arrow. Press R to toggle route; hold Shift to route vertical-first. Click objects to move them, or endpoints to adjust.`,
       );
     } else if (next === "box") {
       this.setStatus(
@@ -936,6 +955,22 @@ export class DrawState {
         `Text mode (${this.describeTextBorderMode(this.textBorderMode)}): click empty space to type, click text to edit, and use its virtual selection box to move it.`,
       );
     }
+  }
+
+  /** Toggles the route used by new elbow connectors. */
+  public toggleElbowOrientation(): void {
+    this.elbowOrientation =
+      this.elbowOrientation === "horizontal-first" ? "vertical-first" : "horizontal-first";
+    if (this.mode === "elbow" && this.pendingLine) {
+      this.pendingLine.orientation = this.elbowOrientation;
+    }
+    this.setStatus(
+      `Elbow route set to ${this.describeElbowOrientation(this.elbowOrientation)}${
+        this.elbowOrientation === "vertical-first"
+          ? " (horizontal arrowheads)"
+          : " (vertical arrowheads)"
+      }.`,
+    );
   }
 
   /** Creates a one-cell paint or line object at the current cursor position. */
@@ -1204,6 +1239,7 @@ export class DrawState {
     this.boxStyleIndex = 0;
     this.lineStyle = LINE_STYLES[0];
     this.lineStyleIndex = 0;
+    this.elbowOrientation = "horizontal-first";
     this.textBorderMode = TEXT_BORDER_MODES[0];
     this.textBorderModeIndex = 0;
     this.inkColor = INK_COLORS[0];
@@ -1343,9 +1379,10 @@ export class DrawState {
     }
 
     if (this.pendingLine) {
-      this.pendingLine.end = constrainLineAxis
-        ? constrainLinePoint(this.pendingLine.start, point)
-        : point;
+      const isElbow = this.mode === "elbow";
+      this.pendingLine.end =
+        constrainLineAxis && !isElbow ? constrainLinePoint(this.pendingLine.start, point) : point;
+      this.pendingLine.orientation = this.getElbowOrientationFromModifier(constrainLineAxis);
       return;
     }
 
@@ -1417,6 +1454,7 @@ export class DrawState {
     if (this.pendingLine) {
       const start = this.pendingLine.start;
       const end = this.pendingLine.end;
+      const orientation = this.pendingLine.orientation;
       const isElbow = this.mode === "elbow";
       this.pendingLine = null;
 
@@ -1426,18 +1464,32 @@ export class DrawState {
       }
 
       this.pushUndo();
-      const object: LineObject | ElbowObject = {
-        id: this.createObjectId(),
-        z: this.allocateZIndex(),
-        parentId: null,
-        color: this.inkColor,
-        type: isElbow ? "elbow" : "line",
-        x1: start.x,
-        y1: start.y,
-        x2: end.x,
-        y2: end.y,
-        style: this.lineStyle,
-      };
+      const object: LineObject | ElbowObject = isElbow
+        ? {
+            id: this.createObjectId(),
+            z: this.allocateZIndex(),
+            parentId: null,
+            color: this.inkColor,
+            type: "elbow",
+            x1: start.x,
+            y1: start.y,
+            x2: end.x,
+            y2: end.y,
+            style: this.lineStyle,
+            orientation,
+          }
+        : {
+            id: this.createObjectId(),
+            z: this.allocateZIndex(),
+            parentId: null,
+            color: this.inkColor,
+            type: "line",
+            x1: start.x,
+            y1: start.y,
+            x2: end.x,
+            y2: end.y,
+            style: this.lineStyle,
+          };
       this.setObjects([...this.objects, object]);
       this.setSelectedObjects([object.id], object.id);
       this.setStatus(`Created ${this.describeObject(this.getObjectById(object.id) ?? object)}.`);
@@ -1775,6 +1827,7 @@ export class DrawState {
             { x: object.x1, y: object.y1 },
             { x: object.x2, y: object.y2 },
             object.style,
+            object.orientation,
           );
           for (const [key, char] of rendered) {
             const { x, y } = pointFromKey(key);
@@ -1857,7 +1910,12 @@ export class DrawState {
 
     const rendered =
       this.mode === "elbow"
-        ? getElbowRenderCharacters(this.pendingLine.start, this.pendingLine.end, this.lineStyle)
+        ? getElbowRenderCharacters(
+            this.pendingLine.start,
+            this.pendingLine.end,
+            this.lineStyle,
+            this.pendingLine.orientation,
+          )
         : getLineRenderCharacters(this.pendingLine.start, this.pendingLine.end, this.lineStyle);
 
     for (const [key, char] of rendered) {
@@ -2415,13 +2473,23 @@ export class DrawState {
   ): TLine {
     const clampedPoint = this.clampPointInsideCanvas(point);
     const anchor = endpoint === "start" ? { x: line.x2, y: line.y2 } : { x: line.x1, y: line.y1 };
-    const nextPoint = constrainLineAxis ? constrainLinePoint(anchor, clampedPoint) : clampedPoint;
+    const nextPoint =
+      constrainLineAxis && line.type !== "elbow"
+        ? constrainLinePoint(anchor, clampedPoint)
+        : clampedPoint;
+    const orientation =
+      line.type === "elbow" && constrainLineAxis
+        ? "vertical-first"
+        : line.type === "elbow"
+          ? line.orientation
+          : undefined;
 
     if (endpoint === "start") {
       return {
         ...line,
         x1: nextPoint.x,
         y1: nextPoint.y,
+        ...(orientation ? { orientation } : {}),
       } as TLine;
     }
 
@@ -2429,6 +2497,7 @@ export class DrawState {
       ...line,
       x2: nextPoint.x,
       y2: nextPoint.y,
+      ...(orientation ? { orientation } : {}),
     } as TLine;
   }
 
@@ -2557,6 +2626,16 @@ export class DrawState {
     return `${rect.left + 1},${rect.top + 1} → ${rect.right + 1},${rect.bottom + 1}`;
   }
 
+  /** Converts the elbow modifier key into a route orientation. */
+  private getElbowOrientationFromModifier(shiftPressed: boolean): ElbowOrientation {
+    return shiftPressed ? "vertical-first" : this.elbowOrientation;
+  }
+
+  /** Formats an elbow route orientation for user-facing status text. */
+  private describeElbowOrientation(orientation: ElbowOrientation): string {
+    return orientation === "vertical-first" ? "vertical-first" : "horizontal-first";
+  }
+
   /** Formats a line style label for user-facing status text. */
   private describeLineStyle(style: LineStyle): string {
     switch (style) {
@@ -2655,13 +2734,21 @@ export class DrawState {
           a.style === (b as BoxObject).style
         );
       case "line":
-      case "elbow":
         return (
           a.x1 === (b as LineObject).x1 &&
           a.y1 === (b as LineObject).y1 &&
           a.x2 === (b as LineObject).x2 &&
           a.y2 === (b as LineObject).y2 &&
           a.style === (b as LineObject).style
+        );
+      case "elbow":
+        return (
+          a.x1 === (b as ElbowObject).x1 &&
+          a.y1 === (b as ElbowObject).y1 &&
+          a.x2 === (b as ElbowObject).x2 &&
+          a.y2 === (b as ElbowObject).y2 &&
+          a.style === (b as ElbowObject).style &&
+          a.orientation === (b as ElbowObject).orientation
         );
       case "paint":
         return (

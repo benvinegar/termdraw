@@ -5,7 +5,7 @@
  * generation, axis-constrained endpoints, and paint-stroke point accumulation.
  */
 import { clamp, normalizeRect } from "./geometry.js";
-import type { LineStyle, Point } from "./types.js";
+import type { ElbowOrientation, LineStyle, Point } from "./types.js";
 
 function getOrthogonalLineGlyphs(style: LineStyle): {
   horizontal: string;
@@ -187,33 +187,61 @@ export function getElbowRenderCharacters(
   start: Point,
   end: Point,
   style: LineStyle = "smooth",
+  orientation: ElbowOrientation = "horizontal-first",
 ): Map<string, string> {
   const rendered = new Map<string, string>();
   const { horizontal, vertical, cornerNE, cornerNW, cornerSE, cornerSW } =
     getOrthogonalLineGlyphs(style);
 
-  const corner = { x: end.x, y: start.y };
+  const corner =
+    orientation === "vertical-first" ? { x: start.x, y: end.y } : { x: end.x, y: start.y };
+  const firstSegmentChar = orientation === "vertical-first" ? vertical : horizontal;
+  const secondSegmentChar = orientation === "vertical-first" ? horizontal : vertical;
 
   for (const point of getLinePoints(start.x, start.y, corner.x, corner.y)) {
-    rendered.set(`${point.x},${point.y}`, horizontal);
+    rendered.set(`${point.x},${point.y}`, firstSegmentChar);
   }
   for (const point of getLinePoints(corner.x, corner.y, end.x, end.y)) {
-    rendered.set(`${point.x},${point.y}`, vertical);
+    rendered.set(`${point.x},${point.y}`, secondSegmentChar);
   }
 
   if (start.x !== end.x && start.y !== end.y) {
-    const cornerGlyph =
-      end.x > start.x
-        ? end.y > start.y
+    const connectsNorth = start.y < corner.y || end.y < corner.y;
+    const connectsSouth = start.y > corner.y || end.y > corner.y;
+    const connectsEast = start.x > corner.x || end.x > corner.x;
+    const connectsWest = start.x < corner.x || end.x < corner.x;
+    const cornerGlyph = connectsNorth
+      ? connectsEast
+        ? cornerNE
+        : cornerNW
+      : connectsSouth
+        ? connectsEast
           ? cornerSE
-          : cornerNE
-        : end.y > start.y
-          ? cornerSW
-          : cornerNW;
+          : cornerSW
+        : connectsEast
+          ? horizontal
+          : connectsWest
+            ? horizontal
+            : vertical;
     rendered.set(`${corner.x},${corner.y}`, cornerGlyph);
   }
 
-  const arrow = end.y > start.y ? "v" : end.y < start.y ? "^" : end.x > start.x ? ">" : "<";
+  const arrow =
+    corner.x !== end.x
+      ? end.x > corner.x
+        ? ">"
+        : "<"
+      : corner.y !== end.y
+        ? end.y > corner.y
+          ? "v"
+          : "^"
+        : end.x !== start.x
+          ? end.x > start.x
+            ? ">"
+            : "<"
+          : end.y > start.y
+            ? "v"
+            : "^";
   rendered.set(`${end.x},${end.y}`, arrow);
   rendered.set(`${start.x},${start.y}`, start.x === corner.x ? vertical : horizontal);
   return rendered;
@@ -238,8 +266,11 @@ export function getElbowRenderCells(
   start: Point,
   end: Point,
   style: LineStyle = "smooth",
+  orientation: ElbowOrientation = "horizontal-first",
 ): Point[] {
-  return [...getElbowRenderCharacters(start, end, style).keys()].map((key) => pointFromKey(key));
+  return [...getElbowRenderCharacters(start, end, style, orientation).keys()].map((key) =>
+    pointFromKey(key),
+  );
 }
 
 /** Returns Bresenham points for the line segment between the endpoints. */

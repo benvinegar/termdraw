@@ -48,6 +48,7 @@ function createMockState(overrides: Record<string, unknown> = {}) {
     moveCursor: () => {},
     cycleBoxStyle: () => {},
     cycleLineStyle: () => {},
+    toggleElbowOrientation: () => {},
     stampBrushAtCursor: () => {},
     eraseAtCursor: () => {},
     cycleBrush: () => {},
@@ -250,6 +251,35 @@ test("handleKeyPress cycles line styles with bracket keys", () => {
   ).toBe(true);
 
   expect(cycles).toEqual([-1, 1]);
+});
+
+test("handleKeyPress toggles elbow route with R", () => {
+  let toggles = 0;
+  let renders = 0;
+  const { event, wasPrevented } = createKeyEvent("r", { raw: "r" });
+
+  const handled = handleKeyPress({
+    key: event as never,
+    state: createMockState({
+      currentMode: "elbow",
+      toggleElbowOrientation: () => {
+        toggles += 1;
+      },
+    }) as never,
+    cancelOnCtrlCEnabled: true,
+    onSave: null,
+    onSaveDiagram: null,
+    onCancel: null,
+    requestRender: () => {
+      renders += 1;
+    },
+    dismissStartupLogo: () => {},
+  });
+
+  expect(handled).toBe(true);
+  expect(wasPrevented()).toBe(true);
+  expect(toggles).toBe(1);
+  expect(renders).toBe(1);
 });
 
 test("handleKeyPress deletes selected objects outside text editing", () => {

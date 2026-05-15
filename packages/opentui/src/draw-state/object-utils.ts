@@ -158,6 +158,7 @@ export function getObjectRenderCells(object: DrawObject): Point[] {
         { x: object.x1, y: object.y1 },
         { x: object.x2, y: object.y2 },
         object.style,
+        object.orientation,
       );
     case "paint":
       return object.points.map((point) => ({ ...point }));
@@ -235,6 +236,7 @@ export function objectContainsPoint(object: DrawObject, x: number, y: number): b
         { x: object.x1, y: object.y1 },
         { x: object.x2, y: object.y2 },
         object.style,
+        object.orientation,
       ).some((point) => point.x === x && point.y === y);
     case "paint":
       return object.points.some((point) => point.x === x && point.y === y);

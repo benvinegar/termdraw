@@ -10,6 +10,9 @@ All notable user-visible changes to this project are documented in this file.
 
 ### Fixed
 
+- Corrected elbow connector corner glyph orientation so turns face their connected segments.
+- Let `R` toggle elbow connector routing, with Shift still available as a temporary vertical-first route, so arrowheads can point horizontally.
+
 ## [0.4.0]
 
 ### Added

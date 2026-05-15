@@ -125,13 +125,13 @@ test("help text documents tool hotkeys and automatic line rendering", () => {
   expect(help).toContain("Select / Box / Line / Elbow / Brush / Text");
   expect(help).toContain("B / A / U / P / E / T");
   expect(help).toContain("choose Smooth (Braille-aware), Single, or Double line stencils");
-  expect(help).toContain("create right-angle connectors with arrowheads using line stencils");
+  expect(help).toContain(
+    "create right-angle connectors with arrowheads using line stencils; R toggles route",
+  );
   expect(help).toContain("choose from preset brush stencils in the palette");
   expect(help).toContain("--load <file>");
   expect(help).toContain("Ctrl+D          save diagram (.td.json)");
-  expect(help).toContain(
-    "Shift + drag    constrain line creation/editing to horizontal or vertical",
-  );
+  expect(help).toContain("route Elbow mode vertical-first for horizontal arrows");
 });
 
 test("TermDrawApp supports custom footer text", async () => {
