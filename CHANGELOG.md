@@ -6,7 +6,17 @@ All notable user-visible changes to this project are documented in this file.
 
 ### Added
 
+### Changed
+
+### Fixed
+
+## [0.4.0]
+
+### Added
+
 - Added native `.td.json` diagram documents that can be opened with `termdraw --load <file>` or `termdraw --load -`.
+- Added a dashed box style for the Box tool.
+- Added an elbow connector tool for right-angle connector lines.
 
 ### Changed
 

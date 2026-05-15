@@ -1,6 +1,6 @@
 {
   "name": "@termdraw/opentui",
-  "version": "0.3.5",
+  "version": "0.4.0",
   "description": "OpenTUI components and renderables for embedding termDRAW in terminal apps.",
   "keywords": [
     "ascii-art",
