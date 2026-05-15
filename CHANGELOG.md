@@ -8,6 +8,8 @@ All notable user-visible changes to this project are documented in this file.
 
 ### Changed
 
+- Replaced the no-op Smooth line style with a Dashed line/elbow style.
+
 ### Fixed
 
 - Corrected elbow connector corner glyph orientation so turns face their connected segments.

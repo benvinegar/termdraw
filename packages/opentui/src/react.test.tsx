@@ -100,7 +100,7 @@ test("TermDrawApp shows line, box, and brush styles contextually", async () => {
 
   await renderOnce();
   let frame = captureCharFrame();
-  expect(frame).toContain("Smooth");
+  expect(frame).toContain("Single");
   expect(frame).toContain("Single");
   expect(frame).toContain("Double");
   expect(frame).not.toContain("Heavy");
@@ -124,7 +124,7 @@ test("help text documents tool hotkeys and automatic line rendering", () => {
   const help = buildHelpText();
   expect(help).toContain("Select / Box / Line / Elbow / Brush / Text");
   expect(help).toContain("B / A / U / P / E / T");
-  expect(help).toContain("choose Smooth (Braille-aware), Single, or Double line stencils");
+  expect(help).toContain("choose Single, Double, or Dashed line stencils");
   expect(help).toContain(
     "create right-angle connectors with arrowheads using line stencils; R toggles route",
   );

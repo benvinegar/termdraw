@@ -165,6 +165,11 @@ function readEnumValue<T extends string>(value: unknown, label: string, options:
   return value as T;
 }
 
+function readLineStyle(value: unknown, label: string): LineStyle {
+  if (value === "smooth") return "light";
+  return readEnumValue(value, label, LINE_STYLES);
+}
+
 function readPoint(value: unknown, label: string): Point {
   if (!isRecord(value)) {
     throw new Error(`${label} must be an object.`);
@@ -220,7 +225,7 @@ function parseDocumentObject(value: unknown, index: number): DrawObject {
         y1: readInteger(value.y1, `${label}.y1`),
         x2: readInteger(value.x2, `${label}.x2`),
         y2: readInteger(value.y2, `${label}.y2`),
-        style: readEnumValue(value.style, `${label}.style`, LINE_STYLES),
+        style: readLineStyle(value.style, `${label}.style`),
       } satisfies LineObject;
     case "elbow":
       return {
@@ -233,7 +238,7 @@ function parseDocumentObject(value: unknown, index: number): DrawObject {
         y1: readInteger(value.y1, `${label}.y1`),
         x2: readInteger(value.x2, `${label}.x2`),
         y2: readInteger(value.y2, `${label}.y2`),
-        style: readEnumValue(value.style, `${label}.style`, LINE_STYLES),
+        style: readLineStyle(value.style, `${label}.style`),
         orientation:
           value.orientation === "vertical-first" || value.orientation === "horizontal-first"
             ? value.orientation
@@ -2639,12 +2644,12 @@ export class DrawState {
   /** Formats a line style label for user-facing status text. */
   private describeLineStyle(style: LineStyle): string {
     switch (style) {
-      case "smooth":
-        return "Smooth";
       case "light":
         return "Single";
       case "double":
         return "Double";
+      case "dashed":
+        return "Dashed";
     }
   }
 

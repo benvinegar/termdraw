@@ -71,9 +71,9 @@ export const BOX_STYLE_OPTIONS: { style: BoxStyle; sample: string; label: string
 
 /** Available line-style rows for the palette. */
 export const LINE_STYLE_OPTIONS: { style: LineStyle; sample: string; label: string }[] = [
-  { style: "smooth", sample: "⠉⠒", label: "Smooth" },
   { style: "light", sample: "─│", label: "Single" },
   { style: "double", sample: "═║", label: "Double" },
+  { style: "dashed", sample: "┄┆", label: "Dashed" },
 ];
 
 /** Available brush presets for paint mode. */

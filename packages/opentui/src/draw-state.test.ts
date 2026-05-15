@@ -67,8 +67,7 @@ describe("DrawState", () => {
     state.handlePointerEvent({ type: "down", button: MouseButton.LEFT, ...shallowStart });
     state.handlePointerEvent({ type: "drag", button: MouseButton.LEFT, ...shallowEnd });
     state.handlePointerEvent({ type: "up", button: MouseButton.LEFT, ...shallowEnd });
-    const shallowChar = state.getCompositeCell(12, 0);
-    expect((shallowChar.codePointAt(0) ?? 0) >= 0x2800).toBe(true);
+    expect(state.getCompositeCell(12, 0)).toBe("─");
   });
 
   test("holding Shift constrains new lines to horizontal or vertical", () => {
@@ -182,6 +181,24 @@ describe("DrawState", () => {
     expect(object?.type === "elbow" ? object.orientation : null).toBe("vertical-first");
   });
 
+  test("elbow tool supports dashed connector segments", () => {
+    const state = new DrawState(24, 16);
+    state.setMode("elbow");
+    state.setLineStyle("dashed");
+
+    const start = canvasPoint(state, 1, 1);
+    const end = canvasPoint(state, 5, 4);
+    state.handlePointerEvent({ type: "down", button: MouseButton.LEFT, ...start });
+    state.handlePointerEvent({ type: "drag", button: MouseButton.LEFT, ...end });
+    state.handlePointerEvent({ type: "up", button: MouseButton.LEFT, ...end });
+
+    expect(state.getCompositeCell(1, 1)).toBe("┄");
+    expect(state.getCompositeCell(4, 1)).toBe("┄");
+    expect(state.getCompositeCell(5, 1)).toBe("┐");
+    expect(state.getCompositeCell(5, 2)).toBe("┆");
+    expect(state.getCompositeCell(5, 4)).toBe("v");
+  });
+
   test("elbow tool uses corner glyphs that face the connected segments", () => {
     const state = new DrawState(24, 24);
     state.setMode("elbow");
@@ -289,16 +306,8 @@ describe("DrawState", () => {
     expect(state.getCompositeCell(2, 1)).toBe("┌");
   });
 
-  test("line styles choose the closest single or double stencil by angle", () => {
+  test("line styles choose the closest single, double, or dashed stencil by angle", () => {
     const state = new DrawState(40, 16);
-
-    const smoothStart = canvasPoint(state, 0, 0);
-    const smoothEnd = canvasPoint(state, 6, 2);
-    state.handlePointerEvent({ type: "down", button: MouseButton.LEFT, ...smoothStart });
-    state.handlePointerEvent({ type: "drag", button: MouseButton.LEFT, ...smoothEnd });
-    state.handlePointerEvent({ type: "up", button: MouseButton.LEFT, ...smoothEnd });
-    const smoothChar = state.getCompositeCell(1, 0);
-    expect((smoothChar.codePointAt(0) ?? 0) >= 0x2800).toBe(true);
 
     state.setLineStyle("light");
     const mostlyHorizontalSingleStart = canvasPoint(state, 8, 0);
@@ -380,6 +389,15 @@ describe("DrawState", () => {
     state.handlePointerEvent({ type: "up", button: MouseButton.LEFT, ...mostlyVerticalDoubleEnd });
     expect(state.getCompositeCell(14, 6)).toBe("║");
     expect(state.getCompositeCell(15, 10)).toBe("║");
+
+    state.setLineStyle("dashed");
+    const horizontalDashedStart = canvasPoint(state, 22, 10);
+    const horizontalDashedEnd = canvasPoint(state, 28, 10);
+    state.handlePointerEvent({ type: "down", button: MouseButton.LEFT, ...horizontalDashedStart });
+    state.handlePointerEvent({ type: "drag", button: MouseButton.LEFT, ...horizontalDashedEnd });
+    state.handlePointerEvent({ type: "up", button: MouseButton.LEFT, ...horizontalDashedEnd });
+    expect(state.getCompositeCell(22, 10)).toBe("┄");
+    expect(state.getCompositeCell(28, 10)).toBe("┄");
   });
 
   test("box styles can draw single, double, and dashed borders", () => {
@@ -663,10 +681,8 @@ describe("DrawState", () => {
     state.handlePointerEvent({ type: "drag", button: MouseButton.LEFT, ...dragEndFinish });
     state.handlePointerEvent({ type: "up", button: MouseButton.LEFT, ...dragEndFinish });
 
-    const adjustedStart = state.getCompositeCell(1, 1);
-    const adjustedEnd = state.getCompositeCell(6, 2);
-    expect((adjustedStart.codePointAt(0) ?? 0) >= 0x2800).toBe(true);
-    expect((adjustedEnd.codePointAt(0) ?? 0) >= 0x2800).toBe(true);
+    expect(state.getCompositeCell(1, 1)).toBe("─");
+    expect(state.getCompositeCell(6, 2)).toBe("─");
 
     state.undo();
     expect(state.getCompositeCell(4, 1)).toBe("─");
@@ -1016,6 +1032,32 @@ describe("DrawState", () => {
 
     expect(state.exportDocument()).toEqual(document);
     expect(state.currentStatus).toContain("Loaded diagram with 1 object");
+  });
+
+  test("parseDrawDocument maps legacy smooth lines to single line style", () => {
+    const document = parseDrawDocument(
+      JSON.stringify({
+        version: DRAW_DOCUMENT_VERSION,
+        objects: [
+          {
+            id: "obj-1",
+            type: "line",
+            z: 1,
+            parentId: null,
+            color: "white",
+            x1: 0,
+            y1: 0,
+            x2: 3,
+            y2: 0,
+            style: "smooth",
+          },
+        ],
+      }),
+    );
+
+    const [object] = document.objects;
+    expect(object?.type).toBe("line");
+    expect(object?.type === "line" ? object.style : null).toBe("light");
   });
 
   test("parseDrawDocument rejects invalid document shapes with clear errors", () => {
