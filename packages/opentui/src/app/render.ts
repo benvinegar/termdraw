@@ -18,6 +18,7 @@ import {
   BOX_STYLE_OPTIONS,
   BRUSH_OPTIONS,
   COLORS,
+  ELBOW_STYLE_OPTIONS,
   LINE_STYLE_OPTIONS,
   MIN_HEIGHT,
   MIN_WIDTH,
@@ -157,9 +158,11 @@ function drawHeaderRow(
       COLORS.panel,
     );
   } else if (state.currentMode === "line" || state.currentMode === "elbow") {
+    const lineStyleOptions =
+      state.currentMode === "elbow" ? ELBOW_STYLE_OPTIONS : LINE_STYLE_OPTIONS;
     const lineStyle =
-      LINE_STYLE_OPTIONS.find((option) => option.style === state.currentLineStyle) ??
-      LINE_STYLE_OPTIONS[0]!;
+      lineStyleOptions.find((option) => option.style === state.currentLineStyle) ??
+      lineStyleOptions[0]!;
     x = drawSegment(frameBuffer, x, y, "  style:", COLORS.dim, COLORS.panel);
     x = drawSegment(
       frameBuffer,

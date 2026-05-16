@@ -464,8 +464,8 @@ export function buildHelpText(binaryName = "termdraw"): string {
       `  select tool     click to select, drag empty space to marquee-select multiple objects\n` +
       `  click objects   select and move them\n` +
       `  drag handles    resize boxes / adjust line endpoints\n` +
-      `  line tool       choose Single, Double, or Dashed line stencils\n` +
-      `  elbow tool      create right-angle connectors with arrowheads using line stencils; R toggles route\n` +
+      `  line tool       choose Smooth (Braille-aware), Single, or Double line stencils\n` +
+      `  elbow tool      choose Single, Double, or Dashed connectors; R toggles route\n` +
       `  text tool       choose No border, Single, Double, or Dashed textbox borders\n` +
       `  Shift + drag    constrain Line mode to an axis; route Elbow mode vertical-first for horizontal arrows\n` +
       `  selected text   shows a virtual selection box\n` +

@@ -20,6 +20,7 @@ import {
   COLOR_SWATCH_COLUMNS,
   COLOR_SWATCH_WIDTH,
   COLORS,
+  ELBOW_STYLE_OPTIONS,
   LINE_STYLE_OPTIONS,
   STYLE_BUTTON_WIDTH,
   TEXT_BORDER_OPTIONS,
@@ -61,7 +62,8 @@ export function isInsideRect(
 /** Returns the number of style rows rendered beneath the active tool. */
 export function getContextualStyleRowCount(currentMode: DrawMode): number {
   if (currentMode === "box") return BOX_STYLE_OPTIONS.length;
-  if (currentMode === "line" || currentMode === "elbow") return LINE_STYLE_OPTIONS.length;
+  if (currentMode === "line") return LINE_STYLE_OPTIONS.length;
+  if (currentMode === "elbow") return ELBOW_STYLE_OPTIONS.length;
   if (currentMode === "paint") return BRUSH_OPTIONS.length;
   if (currentMode === "text") return TEXT_BORDER_OPTIONS.length;
   return 0;
@@ -126,15 +128,17 @@ export function getContextualStyleButtons(layout: AppLayout, currentMode: DrawMo
   const options =
     currentMode === "box"
       ? BOX_STYLE_OPTIONS
-      : currentMode === "line" || currentMode === "elbow"
+      : currentMode === "line"
         ? LINE_STYLE_OPTIONS
-        : currentMode === "text"
-          ? TEXT_BORDER_OPTIONS
-          : BRUSH_OPTIONS.map((option) => ({
-              style: option.brush,
-              sample: option.sample,
-              label: option.label,
-            }));
+        : currentMode === "elbow"
+          ? ELBOW_STYLE_OPTIONS
+          : currentMode === "text"
+            ? TEXT_BORDER_OPTIONS
+            : BRUSH_OPTIONS.map((option) => ({
+                style: option.brush,
+                sample: option.sample,
+                label: option.label,
+              }));
 
   return options.map((option, index) => ({
     style: option.style,

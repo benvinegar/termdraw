@@ -124,6 +124,8 @@ export type {
 
 const MAX_HISTORY = 100;
 const HANDLE_CHARACTER = "●";
+const LINE_MODE_STYLES = ["smooth", "light", "double"] as const satisfies readonly LineStyle[];
+const ELBOW_LINE_STYLES = ["light", "double", "dashed"] as const satisfies readonly LineStyle[];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -166,8 +168,12 @@ function readEnumValue<T extends string>(value: unknown, label: string, options:
 }
 
 function readLineStyle(value: unknown, label: string): LineStyle {
-  if (value === "smooth") return "light";
   return readEnumValue(value, label, LINE_STYLES);
+}
+
+function readElbowLineStyle(value: unknown, label: string): LineStyle {
+  if (value === "smooth") return "light";
+  return readEnumValue(value, label, ["light", "double", "dashed"] as const);
 }
 
 function readPoint(value: unknown, label: string): Point {
@@ -238,7 +244,7 @@ function parseDocumentObject(value: unknown, index: number): DrawObject {
         y1: readInteger(value.y1, `${label}.y1`),
         x2: readInteger(value.x2, `${label}.x2`),
         y2: readInteger(value.y2, `${label}.y2`),
-        style: readLineStyle(value.style, `${label}.style`),
+        style: readElbowLineStyle(value.style, `${label}.style`),
         orientation:
           value.orientation === "vertical-first" || value.orientation === "horizontal-first"
             ? value.orientation
@@ -343,8 +349,10 @@ export class DrawState {
   private brushIndex = 0;
   private boxStyle = BOX_STYLES[0] as BoxStyle;
   private boxStyleIndex = 0;
-  private lineStyle = LINE_STYLES[0] as LineStyle;
+  private lineStyle = LINE_MODE_STYLES[0] as LineStyle;
   private lineStyleIndex = 0;
+  private elbowLineStyle = ELBOW_LINE_STYLES[0] as LineStyle;
+  private elbowLineStyleIndex = 0;
   private elbowOrientation: ElbowOrientation = "horizontal-first";
   private textBorderMode = TEXT_BORDER_MODES[0] as TextBorderMode;
   private textBorderModeIndex = 0;
@@ -396,7 +404,7 @@ export class DrawState {
   }
 
   public get currentLineStyle(): LineStyle {
-    return this.lineStyle;
+    return this.mode === "elbow" ? this.elbowLineStyle : this.lineStyle;
   }
 
   public get currentElbowOrientation(): ElbowOrientation {
@@ -881,19 +889,38 @@ export class DrawState {
     this.setStatus(`Box style set to ${this.describeBoxStyle(this.boxStyle)}.`);
   }
 
-  /** Sets the active line style. */
+  /** Sets the active line or elbow style. */
   public setLineStyle(style: LineStyle): void {
-    this.lineStyle = style;
-    const idx = LINE_STYLES.indexOf(style);
-    this.lineStyleIndex = idx >= 0 ? idx : 0;
-    this.setStatus(`Line style set to ${this.describeLineStyle(style)}.`);
+    if (this.mode === "elbow") {
+      const nextStyle = style === "smooth" ? "light" : style;
+      const idx = ELBOW_LINE_STYLES.indexOf(nextStyle as (typeof ELBOW_LINE_STYLES)[number]);
+      this.elbowLineStyle = idx >= 0 ? nextStyle : "light";
+      this.elbowLineStyleIndex = Math.max(0, idx);
+      this.setStatus(`Elbow style set to ${this.describeLineStyle(this.elbowLineStyle)}.`);
+      return;
+    }
+
+    const nextStyle = style === "dashed" ? "light" : style;
+    const idx = LINE_MODE_STYLES.indexOf(nextStyle as (typeof LINE_MODE_STYLES)[number]);
+    this.lineStyle = idx >= 0 ? nextStyle : "smooth";
+    this.lineStyleIndex = Math.max(0, idx);
+    this.setStatus(`Line style set to ${this.describeLineStyle(this.lineStyle)}.`);
   }
 
-  /** Cycles through the available line styles. */
+  /** Cycles through the available line or elbow styles. */
   public cycleLineStyle(direction: 1 | -1): void {
+    if (this.mode === "elbow") {
+      this.elbowLineStyleIndex =
+        (this.elbowLineStyleIndex + direction + ELBOW_LINE_STYLES.length) %
+        ELBOW_LINE_STYLES.length;
+      this.elbowLineStyle = ELBOW_LINE_STYLES[this.elbowLineStyleIndex] ?? this.elbowLineStyle;
+      this.setStatus(`Elbow style set to ${this.describeLineStyle(this.elbowLineStyle)}.`);
+      return;
+    }
+
     this.lineStyleIndex =
-      (this.lineStyleIndex + direction + LINE_STYLES.length) % LINE_STYLES.length;
-    this.lineStyle = LINE_STYLES[this.lineStyleIndex] ?? this.lineStyle;
+      (this.lineStyleIndex + direction + LINE_MODE_STYLES.length) % LINE_MODE_STYLES.length;
+    this.lineStyle = LINE_MODE_STYLES[this.lineStyleIndex] ?? this.lineStyle;
     this.setStatus(`Line style set to ${this.describeLineStyle(this.lineStyle)}.`);
   }
 
@@ -945,7 +972,7 @@ export class DrawState {
       );
     } else if (next === "elbow") {
       this.setStatus(
-        `Elbow mode (${this.describeLineStyle(this.lineStyle)}, ${this.describeElbowOrientation(this.elbowOrientation)}): drag on empty space to create a right-angle connector with an arrow. Press R to toggle route; hold Shift to route vertical-first. Click objects to move them, or endpoints to adjust.`,
+        `Elbow mode (${this.describeLineStyle(this.elbowLineStyle)}, ${this.describeElbowOrientation(this.elbowOrientation)}): drag on empty space to create a right-angle connector with an arrow. Press R to toggle route; hold Shift to route vertical-first. Click objects to move them, or endpoints to adjust.`,
       );
     } else if (next === "box") {
       this.setStatus(
@@ -1242,8 +1269,10 @@ export class DrawState {
     this.brushIndex = 0;
     this.boxStyle = BOX_STYLES[0];
     this.boxStyleIndex = 0;
-    this.lineStyle = LINE_STYLES[0];
+    this.lineStyle = LINE_MODE_STYLES[0];
     this.lineStyleIndex = 0;
+    this.elbowLineStyle = ELBOW_LINE_STYLES[0];
+    this.elbowLineStyleIndex = 0;
     this.elbowOrientation = "horizontal-first";
     this.textBorderMode = TEXT_BORDER_MODES[0];
     this.textBorderModeIndex = 0;
@@ -1480,7 +1509,7 @@ export class DrawState {
             y1: start.y,
             x2: end.x,
             y2: end.y,
-            style: this.lineStyle,
+            style: this.elbowLineStyle,
             orientation,
           }
         : {
@@ -1918,7 +1947,7 @@ export class DrawState {
         ? getElbowRenderCharacters(
             this.pendingLine.start,
             this.pendingLine.end,
-            this.lineStyle,
+            this.elbowLineStyle,
             this.pendingLine.orientation,
           )
         : getLineRenderCharacters(this.pendingLine.start, this.pendingLine.end, this.lineStyle);
@@ -2644,6 +2673,8 @@ export class DrawState {
   /** Formats a line style label for user-facing status text. */
   private describeLineStyle(style: LineStyle): string {
     switch (style) {
+      case "smooth":
+        return "Smooth";
       case "light":
         return "Single";
       case "double":

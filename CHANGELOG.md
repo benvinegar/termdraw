@@ -8,7 +8,7 @@ All notable user-visible changes to this project are documented in this file.
 
 ### Changed
 
-- Replaced the no-op Smooth line style with a Dashed line/elbow style.
+- Kept Smooth/Single/Double for Line mode while limiting Elbow mode to Single/Double/Dashed connector styles.
 
 ### Fixed
 
