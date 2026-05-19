@@ -8,12 +8,13 @@ All notable user-visible changes to this project are documented in this file.
 
 ### Changed
 
-- Kept Smooth/Single/Double for Line mode while limiting Elbow mode to Single/Double/Dashed connector styles.
+### Fixed
+
+## [0.4.1]
 
 ### Fixed
 
-- Corrected elbow connector corner glyph orientation so turns face their connected segments.
-- Let `R` toggle elbow connector routing, with Shift still available as a temporary vertical-first route, so arrowheads can point horizontally.
+- Replaced deprecated `@mariozechner/*` Pi peer and dev dependencies with `@earendil-works/*` package names in `@termdraw/pi`.
 
 ## [0.4.0]
 
