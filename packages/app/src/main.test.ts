@@ -27,6 +27,7 @@ afterEach(() => {
 
 test("parseArgs accepts --load alongside existing output options", () => {
   expect(parseArgs(["--load", "drawing.td.json", "--fenced", "--output", "art.txt"])).toEqual({
+    clipboard: false,
     diagramPath: "drawing.td.json",
     fenced: true,
     help: false,
@@ -37,26 +38,46 @@ test("parseArgs accepts --load alongside existing output options", () => {
 
 test("parseArgs accepts --version and -v", () => {
   expect(parseArgs(["--version"])).toEqual({
+    clipboard: false,
     fenced: false,
     help: false,
     version: true,
   });
 
   expect(parseArgs(["-v"])).toEqual({
+    clipboard: false,
     fenced: false,
     help: false,
     version: true,
   });
 });
 
+test("parseArgs accepts --clipboard and -c", () => {
+  expect(parseArgs(["--clipboard"])).toEqual({
+    clipboard: true,
+    fenced: false,
+    help: false,
+    version: false,
+  });
+
+  expect(parseArgs(["-c"])).toEqual({
+    clipboard: true,
+    fenced: false,
+    help: false,
+    version: false,
+  });
+});
+
 test("parseArgs keeps the last output formatting flag", () => {
   expect(parseArgs(["--fenced", "--plain"])).toEqual({
+    clipboard: false,
     fenced: false,
     help: false,
     version: false,
   });
 
   expect(parseArgs(["--plain", "--fenced"])).toEqual({
+    clipboard: false,
     fenced: true,
     help: false,
     version: false,
@@ -72,6 +93,7 @@ test("buildCliHelpText only shows CLI options", () => {
   const help = buildCliHelpText();
 
   expect(help).toContain("--load");
+  expect(help).toContain("--clipboard");
   expect(help).toContain("--version");
   expect(help).toContain("--output");
   expect(help).not.toContain("Controls:");
@@ -194,6 +216,7 @@ test("loadDiagramInput surfaces clear parse errors", async () => {
 
 test("with --output parseArgs records the destination path", () => {
   expect(parseArgs(["--output", "diagram.txt"])).toEqual({
+    clipboard: false,
     outputPath: "diagram.txt",
     fenced: false,
     help: false,
@@ -207,6 +230,7 @@ test("help text can be written to a file-like destination path via normal parsin
 
   try {
     expect(parseArgs(["--output", outputPath])).toEqual({
+      clipboard: false,
       outputPath,
       fenced: false,
       help: false,
