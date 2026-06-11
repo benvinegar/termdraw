@@ -8,12 +8,14 @@ import {
   TermDrawApp,
   type DrawDocument,
 } from "@termdraw/opentui";
+import clipboardy from "clipboardy";
 import packageJson from "../package.json";
 
 export interface CliOptions {
   diagramPath?: string;
   outputPath?: string;
   fenced: boolean;
+  clipboard: boolean;
   help: boolean;
   version: boolean;
 }
@@ -34,6 +36,7 @@ function openInteractiveStdin(): NodeJS.ReadStream {
 export function parseArgs(argv: string[]): CliOptions {
   const options: CliOptions = {
     fenced: false,
+    clipboard: false,
     help: false,
     version: false,
   };
@@ -48,6 +51,11 @@ export function parseArgs(argv: string[]): CliOptions {
 
     if (arg === "-v" || arg === "--version") {
       options.version = true;
+      continue;
+    }
+
+    if (arg === "--clipboard" || arg === "-c") {
+      options.clipboard = true;
       continue;
     }
 
@@ -159,10 +167,11 @@ function formatDiagramDocument(document: DrawDocument): string {
 
 export function buildCliHelpText(binaryName = "termdraw"): string {
   return (
-    `${binaryName} [--load file|-] [--output file] [--fenced|--plain] [--version]\n\n` +
+    `${binaryName} [--load file|-] [--output file] [--clipboard] [--fenced|--plain] [--version]\n\n` +
     `Options:\n` +
     `  --load <file|->      load a .td.json diagram file or read one from stdin\n` +
     `  -o, --output <file>  write the rendered result to a file\n` +
+    `  -c, --clipboard      copy the rendered result to the system clipboard\n` +
     `  --fenced             output as a fenced markdown code block\n` +
     `  --plain              output plain text (default)\n` +
     `  -v, --version        show the current version\n` +
@@ -223,10 +232,17 @@ export async function runTermDrawAppCli(argv = Bun.argv.slice(2)): Promise<void>
 
     const output = withTrailingNewline(formatSavedOutput(art, options.fenced));
 
+    if (options.clipboard) {
+      clipboardy.writeSync(output);
+      process.stderr.write("Copied drawing to clipboard.\n");
+    }
+
     if (options.outputPath) {
       await Bun.write(options.outputPath, output);
       process.stderr.write(`Saved drawing to ${options.outputPath}\n`);
-    } else {
+    }
+
+    if (!options.clipboard && !options.outputPath) {
       process.stdout.write(output);
     }
 

@@ -65,6 +65,7 @@
     "@opentui/core": "0.1.97",
     "@opentui/react": "0.1.97",
     "@termdraw/opentui": "0.4.1",
+    "clipboardy": "^5.3.1",
     "react": "^19.2.5"
   },
   "devDependencies": {
