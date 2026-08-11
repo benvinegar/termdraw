@@ -69,11 +69,20 @@ termdraw --output diagram.txt
 # export a fenced Markdown code block
 termdraw --fenced > diagram.md
 
+# copy to the clipboard with Enter instead of exporting (Ctrl+S still exports)
+termdraw --clipboard --fenced
+
 # show CLI help
 termdraw --help
 ```
 
 termDRAW! outputs terminal text, not SVG or bitmap graphics.
+
+With `--clipboard`, Enter copies the rendered drawing to the system clipboard and keeps the editor
+open, so you can copy, refine, and copy again; Ctrl+S still exports and exits. Copying uses the OSC
+52 escape sequence, which the terminal handles rather than the host OS, so it also works over SSH.
+Terminals send no acknowledgement for OSC 52, and one that does not support it (or has it disabled)
+ignores the request silently. Inside tmux, set `set-clipboard` to `on` or `external`.
 
 Use native `.td.json` documents when you want to reopen and keep editing a drawing. Plain-text output remains an export format and does not preserve the original object metadata.
 

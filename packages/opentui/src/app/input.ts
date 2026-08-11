@@ -158,6 +158,8 @@ export function handleKeyPress(
     state: DrawState;
     cancelOnCtrlCEnabled: boolean;
     onSave: (() => void) | null;
+    /** Optional: when omitted, Enter keeps its historical meaning of exporting the drawing. */
+    onCopy?: (() => void) | null;
     onSaveDiagram: (() => void) | null;
     onCancel: (() => void) | null;
   } & InputCallbacks,
@@ -167,6 +169,7 @@ export function handleKeyPress(
     state,
     cancelOnCtrlCEnabled,
     onSave,
+    onCopy,
     onSaveDiagram,
     onCancel,
     requestRender,
@@ -186,6 +189,14 @@ export function handleKeyPress(
     key.preventDefault();
     state.clearSelection();
     requestRender();
+    return true;
+  }
+
+  // Enter copies when a copy handler is wired, so Ctrl+S remains the way to export and finish.
+  // With no handler the two keys stay merged, which is the historical behavior.
+  if ((name === "enter" || name === "return") && onCopy) {
+    key.preventDefault();
+    onCopy();
     return true;
   }
 

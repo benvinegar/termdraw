@@ -6,6 +6,9 @@ All notable user-visible changes to this project are documented in this file.
 
 ### Added
 
+- `--clipboard` (`-c`) in `@termdraw/app`: Enter copies the rendered drawing to the system clipboard via OSC 52 and leaves the editor open, while Ctrl+S keeps exporting and exiting. Without the flag Enter behaves exactly as before.
+- `onCopy` option on `TermDrawApp`/`TermDrawRenderable` in `@termdraw/opentui`, letting a host decide how a copy request is fulfilled.
+
 ### Changed
 
 ### Fixed

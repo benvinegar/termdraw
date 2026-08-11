@@ -340,3 +340,79 @@ test("handleKeyPress inserts printable text in text mode when entry is armed", (
   expect(inserted).toEqual(["a"]);
   expect(renders).toBe(1);
 });
+
+test("handleKeyPress routes Enter to copy when a copy handler is provided", () => {
+  let copied = 0;
+  let saved = 0;
+  const { event, wasPrevented } = createKeyEvent("return");
+
+  const handled = handleKeyPress({
+    key: event as never,
+    state: createMockState() as never,
+    cancelOnCtrlCEnabled: true,
+    onSave: () => {
+      saved += 1;
+    },
+    onCopy: () => {
+      copied += 1;
+    },
+    onSaveDiagram: null,
+    onCancel: null,
+    requestRender: () => {},
+    dismissStartupLogo: () => {},
+  });
+
+  expect(handled).toBe(true);
+  expect(wasPrevented()).toBe(true);
+  expect(copied).toBe(1);
+  expect(saved).toBe(0);
+});
+
+test("handleKeyPress keeps Ctrl+S on save even when a copy handler is provided", () => {
+  let copied = 0;
+  let saved = 0;
+  const { event, wasPrevented } = createKeyEvent("s", { ctrl: true });
+
+  const handled = handleKeyPress({
+    key: event as never,
+    state: createMockState() as never,
+    cancelOnCtrlCEnabled: true,
+    onSave: () => {
+      saved += 1;
+    },
+    onCopy: () => {
+      copied += 1;
+    },
+    onSaveDiagram: null,
+    onCancel: null,
+    requestRender: () => {},
+    dismissStartupLogo: () => {},
+  });
+
+  expect(handled).toBe(true);
+  expect(wasPrevented()).toBe(true);
+  expect(saved).toBe(1);
+  expect(copied).toBe(0);
+});
+
+test("handleKeyPress keeps Enter on save when no copy handler is provided", () => {
+  let saved = 0;
+  const { event, wasPrevented } = createKeyEvent("return");
+
+  const handled = handleKeyPress({
+    key: event as never,
+    state: createMockState() as never,
+    cancelOnCtrlCEnabled: true,
+    onSave: () => {
+      saved += 1;
+    },
+    onSaveDiagram: null,
+    onCancel: null,
+    requestRender: () => {},
+    dismissStartupLogo: () => {},
+  });
+
+  expect(handled).toBe(true);
+  expect(wasPrevented()).toBe(true);
+  expect(saved).toBe(1);
+});

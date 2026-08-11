@@ -14,6 +14,7 @@ export interface CliOptions {
   diagramPath?: string;
   outputPath?: string;
   fenced: boolean;
+  clipboard: boolean;
   help: boolean;
   version: boolean;
 }
@@ -34,6 +35,7 @@ function openInteractiveStdin(): NodeJS.ReadStream {
 export function parseArgs(argv: string[]): CliOptions {
   const options: CliOptions = {
     fenced: false,
+    clipboard: false,
     help: false,
     version: false,
   };
@@ -61,6 +63,11 @@ export function parseArgs(argv: string[]): CliOptions {
       continue;
     }
 
+    if (arg === "-c" || arg === "--clipboard") {
+      options.clipboard = true;
+      continue;
+    }
+
     if (arg === "-o" || arg === "--output") {
       const outputPath = argv[i + 1];
       if (!outputPath) {
@@ -85,6 +92,22 @@ export function parseArgs(argv: string[]): CliOptions {
   }
 
   return options;
+}
+
+/**
+ * Copies text to the system clipboard using the OSC 52 terminal escape sequence.
+ *
+ * OSC 52 is handled by the terminal rather than the host OS, so it works unchanged over SSH and
+ * inside multiplexers, where a local helper such as pbcopy would only reach the remote machine.
+ * The sequence is fire-and-forget: terminals send no acknowledgement, and one that does not
+ * implement OSC 52 (or has it disabled) silently ignores it.
+ *
+ * tmux only forwards this when `set-clipboard` is `on` or `external`; screen requires its own
+ * wrapper and is not handled here.
+ */
+export function copyToClipboardOsc52(text: string, write: (chunk: string) => void): void {
+  const payload = Buffer.from(text, "utf8").toString("base64");
+  write(`\u001b]52;c;${payload}\u0007`);
 }
 
 function withTrailingNewline(text: string): string {
@@ -164,6 +187,7 @@ export function buildCliHelpText(binaryName = "termdraw"): string {
     `  --load <file|->      load a .td.json diagram file or read one from stdin\n` +
     `  -o, --output <file>  write the rendered result to a file\n` +
     `  --fenced             output as a fenced markdown code block\n` +
+    `  -c, --clipboard      Enter copies the drawing to the clipboard (Ctrl+S still exports)\n` +
     `  --plain              output plain text (default)\n` +
     `  -v, --version        show the current version\n` +
     `  -h, --help           show this help\n`
@@ -244,6 +268,16 @@ export async function runTermDrawAppCli(argv = Bun.argv.slice(2)): Promise<void>
       onSave={(art: string) => {
         void finish(art);
       }}
+      onCopy={
+        options.clipboard
+          ? (art: string) => {
+              copyToClipboardOsc52(
+                formatSavedOutput(art, options.fenced),
+                (chunk) => void process.stdout.write(chunk),
+              );
+            }
+          : undefined
+      }
       onSaveDiagram={async (document, path) => {
         await Bun.write(path, formatDiagramDocument(document));
       }}
