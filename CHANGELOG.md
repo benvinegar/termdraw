@@ -8,7 +8,11 @@ All notable user-visible changes to this project are documented in this file.
 
 ### Changed
 
+- Verified `@termdraw/pi` compatibility with Pi 0.84 and typechecked the extension against `@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui` 0.84.1.
+
 ### Fixed
+
+- Made the Pi smoke test hermetic by passing `--no-extensions`, so conflicting globally installed Pi extensions no longer fail the run.
 
 ## [0.4.1]
 
