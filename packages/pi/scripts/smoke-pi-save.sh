@@ -102,7 +102,7 @@ main() {
     -x "${WINDOW_WIDTH}" \
     -y "${WINDOW_HEIGHT}" \
     -c "${REPO_ROOT}" \
-    "PI_TERMDRAW_SMOKE_TEXT=${SMOKE_TEXT@Q} pi --offline --no-session -e ${EXTENSION_PATH@Q}"
+    "PI_TERMDRAW_SMOKE_TEXT=${SMOKE_TEXT@Q} pi --offline --no-session --no-extensions -e ${EXTENSION_PATH@Q}"
 
   wait_for_any_text 30 'Kernel:' '[Extensions]' 'Press ctrl+o to show full startup help and loaded resources.'
 
