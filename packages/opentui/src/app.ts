@@ -57,6 +57,11 @@ export interface TermDrawRenderableOptions extends RenderableOptions<FrameBuffer
   height?: number | "auto" | `${number}%`;
   respectAlpha?: boolean;
   onSave?: (art: string) => void;
+  /**
+   * Invoked when the user asks for the drawing to be copied rather than exported. When provided,
+   * Enter routes here and Ctrl+S keeps exporting; when omitted, Enter exports exactly as before.
+   */
+  onCopy?: (art: string) => void;
   onSaveDiagram?: (document: DrawDocument, path: string) => void | Promise<void>;
   onCancel?: () => void;
   initialDocument?: DrawDocument;
@@ -78,6 +83,7 @@ export class TermDrawRenderable extends FrameBufferRenderable {
   private readonly state: DrawState;
   private readonly chromeMode: ChromeMode;
   private onSaveCallback: ((art: string) => void) | null = null;
+  private onCopyCallback: ((art: string) => void) | null = null;
   private onSaveDiagramCallback:
     | ((document: DrawDocument, path: string) => void | Promise<void>)
     | null = null;
@@ -100,6 +106,7 @@ export class TermDrawRenderable extends FrameBufferRenderable {
       width,
       height,
       onSave,
+      onCopy,
       onSaveDiagram,
       onCancel,
       initialDocument,
@@ -125,6 +132,7 @@ export class TermDrawRenderable extends FrameBufferRenderable {
     this.state = new DrawState(this.width, this.height, getCanvasInsets(this.chromeMode));
     this.focusable = true;
     this.onSave = onSave;
+    this.onCopy = onCopy;
     this.onSaveDiagram = onSaveDiagram;
     this.onCancel = onCancel;
     this.pendingInitialDocument = initialDocument ?? null;
@@ -148,6 +156,11 @@ export class TermDrawRenderable extends FrameBufferRenderable {
   /** Sets the callback invoked when the user saves the current drawing. */
   public set onSave(handler: ((art: string) => void) | undefined) {
     this.onSaveCallback = handler ?? null;
+  }
+
+  /** Sets the callback invoked when the user copies the current drawing. */
+  public set onCopy(handler: ((art: string) => void) | undefined) {
+    this.onCopyCallback = handler ?? null;
   }
 
   /** Sets the callback invoked when the user cancels out of the editor. */
@@ -257,6 +270,7 @@ export class TermDrawRenderable extends FrameBufferRenderable {
         fullLayout,
         this.footerTextOverride,
         this.onSaveDiagramCallback !== null,
+        this.onCopyCallback !== null,
       );
       drawToolPalette(
         this.frameBuffer,
@@ -297,11 +311,24 @@ export class TermDrawRenderable extends FrameBufferRenderable {
       state: this.state,
       cancelOnCtrlCEnabled: this.cancelOnCtrlCEnabled,
       onSave: this.onSaveCallback ? () => this.onSaveCallback?.(this.state.exportArt()) : null,
+      onCopy: this.onCopyCallback ? () => this.handleCopy() : null,
       onSaveDiagram: this.onSaveDiagramCallback ? () => this.beginDiagramSave() : null,
       onCancel: this.onCancelCallback,
       requestRender: () => this.requestRender(),
       dismissStartupLogo: () => this.dismissStartupLogo(),
     });
+  }
+
+  /**
+   * Hands the rendered art to the copy callback and reports it in the status bar.
+   *
+   * The editor stays open, unlike export: copying is not a way of finishing, so the drawing
+   * remains editable and can be copied again after further edits.
+   */
+  private handleCopy(): void {
+    this.onCopyCallback?.(this.state.exportArt());
+    this.state.setStatusMessage("Copied drawing to clipboard.");
+    this.requestRender();
   }
 
   /** Hides the startup logo permanently after the first meaningful interaction. */

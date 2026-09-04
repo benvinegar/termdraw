@@ -78,6 +78,7 @@ export function drawChrome(
   layout: AppLayout,
   footerTextOverride: string | null,
   canSaveDiagram: boolean,
+  canCopy: boolean,
 ): void {
   drawHorizontalBorder(frameBuffer, width, 0, "╭", "╮");
   drawHorizontalBorder(frameBuffer, width, height - 1, "╰", "╯");
@@ -99,6 +100,7 @@ export function drawChrome(
     layout,
     footerTextOverride,
     canSaveDiagram,
+    canCopy,
   );
 }
 
@@ -228,10 +230,13 @@ function drawFooterRow(
   layout: AppLayout,
   footerTextOverride: string | null,
   canSaveDiagram: boolean,
+  canCopy: boolean,
 ): void {
+  // Enter and Ctrl+S only diverge when a copy handler is wired; otherwise they stay one action.
+  const saveKeys = canCopy ? "Enter Copy • Ctrl+S Export Art" : "Enter/Ctrl+S Export Art";
   const text =
     footerTextOverride ??
-    `B Brush • A Select • U Box • P Line • E Elbow • T Text • Esc Deselect • Enter/Ctrl+S Export Art${
+    `B Brush • A Select • U Box • P Line • E Elbow • T Text • Esc Deselect • ${saveKeys}${
       canSaveDiagram ? " • Ctrl+D Save Diagram" : ""
     } • Ctrl+Q Quit`;
   const combined = `${text}  ${status}`;

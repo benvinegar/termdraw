@@ -7,6 +7,7 @@ import { version as appVersion } from "../package.json";
 import { DRAW_DOCUMENT_VERSION } from "../../opentui/src/index";
 import {
   buildCliHelpText,
+  copyToClipboardOsc52,
   getInteractiveStdin,
   loadDiagramInput,
   parseArgs,
@@ -28,6 +29,7 @@ afterEach(() => {
 test("parseArgs accepts --load alongside existing output options", () => {
   expect(parseArgs(["--load", "drawing.td.json", "--fenced", "--output", "art.txt"])).toEqual({
     diagramPath: "drawing.td.json",
+    clipboard: false,
     fenced: true,
     help: false,
     outputPath: "art.txt",
@@ -37,26 +39,53 @@ test("parseArgs accepts --load alongside existing output options", () => {
 
 test("parseArgs accepts --version and -v", () => {
   expect(parseArgs(["--version"])).toEqual({
+    clipboard: false,
     fenced: false,
     help: false,
     version: true,
   });
 
   expect(parseArgs(["-v"])).toEqual({
+    clipboard: false,
     fenced: false,
     help: false,
     version: true,
   });
 });
 
+test("parseArgs accepts --clipboard and -c", () => {
+  expect(parseArgs(["--clipboard"])).toEqual({
+    clipboard: true,
+    fenced: false,
+    help: false,
+    version: false,
+  });
+
+  expect(parseArgs(["-c"])).toEqual({
+    clipboard: true,
+    fenced: false,
+    help: false,
+    version: false,
+  });
+});
+
+test("copyToClipboardOsc52 emits a base64 OSC 52 sequence", () => {
+  const chunks: string[] = [];
+  copyToClipboardOsc52("hi", (chunk) => chunks.push(chunk));
+
+  expect(chunks).toEqual([`\u001b]52;c;${Buffer.from("hi", "utf8").toString("base64")}\u0007`]);
+});
+
 test("parseArgs keeps the last output formatting flag", () => {
   expect(parseArgs(["--fenced", "--plain"])).toEqual({
+    clipboard: false,
     fenced: false,
     help: false,
     version: false,
   });
 
   expect(parseArgs(["--plain", "--fenced"])).toEqual({
+    clipboard: false,
     fenced: true,
     help: false,
     version: false,
@@ -195,6 +224,7 @@ test("loadDiagramInput surfaces clear parse errors", async () => {
 test("with --output parseArgs records the destination path", () => {
   expect(parseArgs(["--output", "diagram.txt"])).toEqual({
     outputPath: "diagram.txt",
+    clipboard: false,
     fenced: false,
     help: false,
     version: false,
@@ -208,6 +238,7 @@ test("help text can be written to a file-like destination path via normal parsin
   try {
     expect(parseArgs(["--output", outputPath])).toEqual({
       outputPath,
+      clipboard: false,
       fenced: false,
       help: false,
       version: false,
