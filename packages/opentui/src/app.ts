@@ -58,8 +58,8 @@ export interface TermDrawRenderableOptions extends RenderableOptions<FrameBuffer
   respectAlpha?: boolean;
   onSave?: (art: string) => void;
   /**
-   * Invoked when the user asks for the drawing to be copied rather than exported. When provided,
-   * Enter routes here and Ctrl+S keeps exporting; when omitted, Enter exports exactly as before.
+   * Invoked when the user presses Enter outside active text entry. When provided, Enter copies and
+   * Ctrl+S exports; when omitted, Enter exports. During text entry, Enter finishes editing instead.
    */
   onCopy?: (art: string) => void;
   onSaveDiagram?: (document: DrawDocument, path: string) => void | Promise<void>;
@@ -505,7 +505,8 @@ export function buildHelpText(binaryName = "termdraw"): string {
       `  mouse wheel     cycle box style in Box mode, line style in Line/Elbow mode, or brush in Brush mode\n` +
       `  brush tool      choose from preset brush stencils in the palette\n` +
       `  Space           stamp a line point or current brush / insert space in Text mode\n` +
-      `  Enter / Ctrl+S  export art\n` +
+      `  Enter           finish active text entry; otherwise export art\n` +
+      `  Ctrl+S          export art, including during text entry\n` +
       `  Ctrl+D          save diagram (.td.json), prompting for a path when needed\n\n` +
       `Options:\n` +
       `  --load <file>       open a native termDRAW document from a file\n` +
