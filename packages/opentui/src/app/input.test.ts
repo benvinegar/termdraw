@@ -341,6 +341,49 @@ test("handleKeyPress inserts printable text in text mode when entry is armed", (
   expect(renders).toBe(1);
 });
 
+test("handleKeyPress finishes active text entry instead of saving or copying", () => {
+  let cleared = 0;
+  let copied = 0;
+  let saved = 0;
+  let renders = 0;
+  const state = createMockState({
+    currentMode: "text",
+    isTextEntryArmed: true,
+    clearSelection: () => {
+      cleared += 1;
+    },
+  });
+
+  for (const overrides of [{}, { shift: true }]) {
+    const { event, wasPrevented } = createKeyEvent("return", overrides);
+    expect(
+      handleKeyPress({
+        key: event as never,
+        state: state as never,
+        cancelOnCtrlCEnabled: true,
+        onSave: () => {
+          saved += 1;
+        },
+        onCopy: () => {
+          copied += 1;
+        },
+        onSaveDiagram: null,
+        onCancel: null,
+        requestRender: () => {
+          renders += 1;
+        },
+        dismissStartupLogo: () => {},
+      }),
+    ).toBe(true);
+    expect(wasPrevented()).toBe(true);
+  }
+
+  expect(cleared).toBe(2);
+  expect(copied).toBe(0);
+  expect(saved).toBe(0);
+  expect(renders).toBe(2);
+});
+
 test("handleKeyPress routes Enter to copy when a copy handler is provided", () => {
   let copied = 0;
   let saved = 0;
@@ -368,14 +411,17 @@ test("handleKeyPress routes Enter to copy when a copy handler is provided", () =
   expect(saved).toBe(0);
 });
 
-test("handleKeyPress keeps Ctrl+S on save even when a copy handler is provided", () => {
+test("handleKeyPress keeps Ctrl+S on save during text entry", () => {
   let copied = 0;
   let saved = 0;
   const { event, wasPrevented } = createKeyEvent("s", { ctrl: true });
 
   const handled = handleKeyPress({
     key: event as never,
-    state: createMockState() as never,
+    state: createMockState({
+      currentMode: "text",
+      isTextEntryArmed: true,
+    }) as never,
     cancelOnCtrlCEnabled: true,
     onSave: () => {
       saved += 1;

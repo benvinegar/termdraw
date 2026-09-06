@@ -192,15 +192,27 @@ export function handleKeyPress(
     return true;
   }
 
+  const isEnter = name === "enter" || name === "return";
+  const isModifiedEnter = key.ctrl || key.meta || key.option || key.super || key.hyper;
+
+  // Enter finishes active text entry instead of unexpectedly exporting and closing the editor.
+  // Shift+Enter follows the same safe behavior until multiline text is supported.
+  if (isEnter && !isModifiedEnter && state.currentMode === "text" && state.isTextEntryArmed) {
+    key.preventDefault();
+    state.clearSelection();
+    requestRender();
+    return true;
+  }
+
   // Enter copies when a copy handler is wired, so Ctrl+S remains the way to export and finish.
   // With no handler the two keys stay merged, which is the historical behavior.
-  if ((name === "enter" || name === "return") && onCopy) {
+  if (isEnter && onCopy) {
     key.preventDefault();
     onCopy();
     return true;
   }
 
-  if (name === "enter" || name === "return" || (key.ctrl && name === "s")) {
+  if (isEnter || (key.ctrl && name === "s")) {
     key.preventDefault();
     onSave?.();
     return true;

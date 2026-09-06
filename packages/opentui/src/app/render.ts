@@ -232,8 +232,10 @@ function drawFooterRow(
   canSaveDiagram: boolean,
   canCopy: boolean,
 ): void {
-  // Enter and Ctrl+S only diverge when a copy handler is wired; otherwise they stay one action.
-  const saveKeys = canCopy ? "Enter Copy • Ctrl+S Export Art" : "Enter/Ctrl+S Export Art";
+  // Enter first finishes active text entry; outside text entry it copies or exports as before.
+  const saveKeys = canCopy
+    ? "Enter Finish Text/Copy • Ctrl+S Export Art"
+    : "Enter Finish Text/Export Art • Ctrl+S Export Art";
   const text =
     footerTextOverride ??
     `B Brush • A Select • U Box • P Line • E Elbow • T Text • Esc Deselect • ${saveKeys}${

@@ -15,6 +15,7 @@ All notable user-visible changes to this project are documented in this file.
 
 ### Fixed
 
+- Prevented Enter and Shift+Enter from unexpectedly exporting and closing termDRAW during active text entry; they now finish text entry while Ctrl+S remains the explicit export shortcut.
 - Made the Pi smoke test hermetic by passing `--no-extensions`, so conflicting globally installed Pi extensions no longer fail the run.
 
 ## [0.4.1]
