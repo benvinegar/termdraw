@@ -260,29 +260,6 @@ export function handleKeyPress(
     return true;
   }
 
-  const unmodifiedClipboardAction =
-    name === "c"
-      ? () => state.copySelection()
-      : name === "x"
-        ? () => state.cutSelection()
-        : name === "v"
-          ? () => state.pasteClipboard()
-          : null;
-  if (
-    state.currentMode === "select" &&
-    !key.ctrl &&
-    !key.meta &&
-    !key.option &&
-    !key.super &&
-    !key.hyper &&
-    unmodifiedClipboardAction
-  ) {
-    key.preventDefault();
-    unmodifiedClipboardAction();
-    requestRender();
-    return true;
-  }
-
   if (key.ctrl && key.shift && name === "c") {
     key.preventDefault();
     state.copySelection();
@@ -513,6 +490,13 @@ export function handleDiagramSavePromptKey(
   }
 
   const name = key.name.toLowerCase();
+  if ((key.ctrl && !key.shift && name === "c") || (key.ctrl && name === "q")) {
+    return {
+      handled: false,
+      prompt,
+    };
+  }
+
   if (name === "escape" || name === "esc") {
     key.preventDefault();
     return {

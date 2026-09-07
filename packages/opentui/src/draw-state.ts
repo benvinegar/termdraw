@@ -2428,8 +2428,8 @@ export class DrawState {
     const minDy = -bounds.top;
     const maxDy = this.canvasHeight - 1 - bounds.bottom;
 
-    const dx = minDx <= maxDx ? clamp(desiredDx, minDx, maxDx) : desiredDx;
-    const dy = minDy <= maxDy ? clamp(desiredDy, minDy, maxDy) : desiredDy;
+    const dx = minDx <= maxDx ? clamp(desiredDx, minDx, maxDx) : -bounds.left;
+    const dy = minDy <= maxDy ? clamp(desiredDy, minDy, maxDy) : -bounds.top;
 
     return objects.map((object) => translateObject(object, dx, dy));
   }

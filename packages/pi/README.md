@@ -22,7 +22,7 @@ Inside Pi:
 /termdraw
 ```
 
-Use `Enter` or `Ctrl+S` to insert the drawing into Pi. In Select mode, press `C`, `X`, or `V` to copy, cut, or paste selected objects; `Ctrl+Shift+C/X/V` are aliases when the terminal forwards them. Use `Ctrl+C` or `Ctrl+Q` to close without inserting.
+Use `Enter` or `Ctrl+S` to insert the drawing into Pi. In Select mode, use `Ctrl+Shift+C/X/V` to copy, cut, or paste selected objects when those shortcuts are forwarded by the terminal. Use `Ctrl+C` or `Ctrl+Q` to close without inserting.
 
 ## Local development
 

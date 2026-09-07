@@ -1041,6 +1041,45 @@ describe("DrawState", () => {
     expect(state.exportDocument().objects).toHaveLength(6);
   });
 
+  test("keeps oversized repeated pastes anchored after the canvas shrinks", () => {
+    const state = new DrawState(8, 8);
+    state.loadDocument({
+      version: DRAW_DOCUMENT_VERSION,
+      objects: [
+        {
+          id: "obj-1",
+          type: "box",
+          z: 1,
+          parentId: null,
+          color: "white",
+          left: 0,
+          top: 0,
+          right: 5,
+          bottom: 5,
+          style: "light",
+        },
+      ],
+    });
+    state.setMode("select");
+
+    const boxCell = canvasPoint(state, 0, 0);
+    state.handlePointerEvent({ type: "down", button: MouseButton.LEFT, ...boxCell });
+    state.handlePointerEvent({ type: "up", button: MouseButton.LEFT, ...boxCell });
+    expect(state.copySelection()).toBe(true);
+
+    state.ensureCanvasSize(3, 3, { top: 0, right: 0, bottom: 0, left: 0 });
+    expect(state.pasteClipboard()).toBe(true);
+    expect(state.pasteClipboard()).toBe(true);
+
+    const pastedBoxes = state
+      .exportDocument()
+      .objects.filter((object) => object.type === "box" && object.id !== "obj-1");
+    expect(pastedBoxes).toHaveLength(2);
+    expect(
+      pastedBoxes.every((object) => object.type === "box" && object.left === 0 && object.top === 0),
+    ).toBe(true);
+  });
+
   test("cuts selected object trees and can paste them back", () => {
     const state = new DrawState(30, 12);
     state.loadDocument({

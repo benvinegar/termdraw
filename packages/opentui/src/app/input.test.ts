@@ -63,6 +63,23 @@ function createMockState(overrides: Record<string, unknown> = {}) {
   };
 }
 
+test("handleDiagramSavePromptKey leaves terminal cancel shortcuts for the app", () => {
+  const prompt: DiagramSavePromptState = {
+    value: "diagram",
+    error: null,
+    pending: false,
+  };
+
+  for (const name of ["c", "q"]) {
+    const { event, wasPrevented } = createKeyEvent(name, { ctrl: true });
+    expect(handleDiagramSavePromptKey(event, prompt)).toEqual({
+      handled: false,
+      prompt,
+    });
+    expect(wasPrevented()).toBe(false);
+  }
+});
+
 test("handleDiagramSavePromptKey cancels the prompt for esc keys", () => {
   const prompt: DiagramSavePromptState = {
     value: "diagram",
@@ -213,35 +230,6 @@ test("handleKeyPress routes Ctrl+Shift clipboard shortcuts without cancelling", 
   expect(calls).toEqual(["copy", "cut", "paste"]);
   expect(cancelled).toBe(0);
   expect(renders).toBe(3);
-});
-
-test("handleKeyPress provides terminal-safe clipboard keys in Select mode", () => {
-  const calls: string[] = [];
-  const state = createMockState({
-    currentMode: "select",
-    copySelection: () => calls.push("copy"),
-    cutSelection: () => calls.push("cut"),
-    pasteClipboard: () => calls.push("paste"),
-  });
-
-  for (const name of ["c", "x", "v"]) {
-    const { event, wasPrevented } = createKeyEvent(name, { raw: name });
-    expect(
-      handleKeyPress({
-        key: event as never,
-        state: state as never,
-        cancelOnCtrlCEnabled: true,
-        onSave: null,
-        onSaveDiagram: null,
-        onCancel: null,
-        requestRender: () => {},
-        dismissStartupLogo: () => {},
-      }),
-    ).toBe(true);
-    expect(wasPrevented()).toBe(true);
-  }
-
-  expect(calls).toEqual(["copy", "cut", "paste"]);
 });
 
 test("handleKeyPress switches tools with hotkeys outside text entry", () => {

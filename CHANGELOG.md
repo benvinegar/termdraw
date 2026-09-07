@@ -6,7 +6,7 @@ All notable user-visible changes to this project are documented in this file.
 
 ### Added
 
-- Object copy, cut, and paste with `C`, `X`, and `V` in Select mode, plus `Ctrl+Shift+C/X/V` aliases in terminals that forward them, including multi-object selections, nested objects, repeated paste offsets, and undo/redo support.
+- Object copy, cut, and paste with `Ctrl+Shift+C/X/V` in terminals that forward them, including multi-object selections, nested objects, repeated paste offsets, and undo/redo support, while preserving plain `Ctrl+C` as cancel.
 - `--clipboard` (`-c`) in `@termdraw/app`: Enter copies the rendered drawing to the system clipboard via OSC 52 and leaves the editor open, while Ctrl+S keeps exporting and exiting. Without the flag Enter behaves exactly as before.
 - `onCopy` option on `TermDrawApp`/`TermDrawRenderable` in `@termdraw/opentui`, letting a host decide how a copy request is fulfilled.
 
