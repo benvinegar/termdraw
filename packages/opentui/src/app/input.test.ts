@@ -42,6 +42,9 @@ function createMockState(overrides: Record<string, unknown> = {}) {
     setMode: () => {},
     undo: () => {},
     redo: () => {},
+    copySelection: () => {},
+    cutSelection: () => {},
+    pasteClipboard: () => {},
     clearCanvas: () => {},
     deleteSelectedObject: () => {},
     moveSelectedObjectBy: () => {},
@@ -110,6 +113,28 @@ test("handleKeyPress clears selection on Escape", () => {
   expect(dismissed).toBe(1);
 });
 
+test("handleKeyPress keeps Ctrl+C as the terminal cancel shortcut", () => {
+  let cancelled = 0;
+  const { event, wasPrevented } = createKeyEvent("c", { ctrl: true });
+
+  const handled = handleKeyPress({
+    key: event as never,
+    state: createMockState() as never,
+    cancelOnCtrlCEnabled: true,
+    onSave: null,
+    onSaveDiagram: null,
+    onCancel: () => {
+      cancelled += 1;
+    },
+    requestRender: () => {},
+    dismissStartupLogo: () => {},
+  });
+
+  expect(handled).toBe(true);
+  expect(wasPrevented()).toBe(true);
+  expect(cancelled).toBe(1);
+});
+
 test("handleKeyPress invokes cancel on Ctrl+Q", () => {
   let cancelled = 0;
   const { event, wasPrevented } = createKeyEvent("q", { ctrl: true });
@@ -152,6 +177,71 @@ test("handleKeyPress invokes save on Ctrl+S", () => {
   expect(handled).toBe(true);
   expect(wasPrevented()).toBe(true);
   expect(saved).toBe(1);
+});
+
+test("handleKeyPress routes Ctrl+Shift clipboard shortcuts without cancelling", () => {
+  const calls: string[] = [];
+  let cancelled = 0;
+  let renders = 0;
+  const state = createMockState({
+    copySelection: () => calls.push("copy"),
+    cutSelection: () => calls.push("cut"),
+    pasteClipboard: () => calls.push("paste"),
+  });
+
+  for (const name of ["c", "x", "v"]) {
+    const { event, wasPrevented } = createKeyEvent(name, { ctrl: true, shift: true });
+    expect(
+      handleKeyPress({
+        key: event as never,
+        state: state as never,
+        cancelOnCtrlCEnabled: true,
+        onSave: null,
+        onSaveDiagram: null,
+        onCancel: () => {
+          cancelled += 1;
+        },
+        requestRender: () => {
+          renders += 1;
+        },
+        dismissStartupLogo: () => {},
+      }),
+    ).toBe(true);
+    expect(wasPrevented()).toBe(true);
+  }
+
+  expect(calls).toEqual(["copy", "cut", "paste"]);
+  expect(cancelled).toBe(0);
+  expect(renders).toBe(3);
+});
+
+test("handleKeyPress provides terminal-safe clipboard keys in Select mode", () => {
+  const calls: string[] = [];
+  const state = createMockState({
+    currentMode: "select",
+    copySelection: () => calls.push("copy"),
+    cutSelection: () => calls.push("cut"),
+    pasteClipboard: () => calls.push("paste"),
+  });
+
+  for (const name of ["c", "x", "v"]) {
+    const { event, wasPrevented } = createKeyEvent(name, { raw: name });
+    expect(
+      handleKeyPress({
+        key: event as never,
+        state: state as never,
+        cancelOnCtrlCEnabled: true,
+        onSave: null,
+        onSaveDiagram: null,
+        onCancel: null,
+        requestRender: () => {},
+        dismissStartupLogo: () => {},
+      }),
+    ).toBe(true);
+    expect(wasPrevented()).toBe(true);
+  }
+
+  expect(calls).toEqual(["copy", "cut", "paste"]);
 });
 
 test("handleKeyPress switches tools with hotkeys outside text entry", () => {
@@ -314,7 +404,7 @@ test("handleKeyPress deletes selected objects outside text editing", () => {
 test("handleKeyPress inserts printable text in text mode when entry is armed", () => {
   const inserted: string[] = [];
   let renders = 0;
-  const { event, wasPrevented } = createKeyEvent("a", { raw: "a" });
+  const { event, wasPrevented } = createKeyEvent("c", { raw: "c" });
 
   const handled = handleKeyPress({
     key: event as never,
@@ -337,7 +427,7 @@ test("handleKeyPress inserts printable text in text mode when entry is armed", (
 
   expect(handled).toBe(true);
   expect(wasPrevented()).toBe(true);
-  expect(inserted).toEqual(["a"]);
+  expect(inserted).toEqual(["c"]);
   expect(renders).toBe(1);
 });
 

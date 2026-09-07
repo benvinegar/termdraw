@@ -111,7 +111,7 @@ main() {
   wait_for_any_text 30 'Inserted drawing into editor.' 'termDRAW!'
 
   if ! capture_pane | grep -Fq -- 'Inserted drawing into editor.'; then
-    wait_for_text 'B Brush • A Select • U Box • P Line • T Text' 30
+    wait_for_text 'A Select • C/X/V Copy/Cut/Paste' 30
     tmux send-keys -t "${PANE_TARGET}" Enter
     wait_for_text 'Inserted drawing into editor.' 30
   fi

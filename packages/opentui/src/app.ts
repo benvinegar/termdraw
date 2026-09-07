@@ -499,6 +499,8 @@ export function buildHelpText(binaryName = "termdraw"): string {
       `  Delete          remove selected object\n` +
       `  Esc             deselect\n` +
       `  Ctrl+Q          quit\n` +
+      `  C / X / V       copy / cut / paste in Select mode\n` +
+      `  Ctrl+Shift+C/X/V alternate clipboard shortcuts when forwarded by the terminal\n` +
       `  Ctrl+Z / Ctrl+Y undo / redo\n` +
       `  Ctrl+X          clear canvas\n` +
       `  [ / ]           cycle box style in Box mode, line style in Line/Elbow mode, text border in Text mode, or brush in Brush mode\n` +

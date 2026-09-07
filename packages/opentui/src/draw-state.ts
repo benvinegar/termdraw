@@ -14,7 +14,6 @@ import {
   normalizeRect,
   rectContainsPoint,
   rectContainsRect,
-  rectsIntersect,
 } from "./draw-state/geometry.js";
 import {
   appendPaintSegment,
@@ -33,7 +32,6 @@ import {
   getLineEndpointPoints,
   getObjectBounds,
   getObjectRenderCells,
-  getObjectSelectionBounds,
   objectContainsPoint,
   translateObject,
 } from "./draw-state/object-utils.js";
@@ -124,6 +122,11 @@ export type {
 
 const MAX_HISTORY = 100;
 const HANDLE_CHARACTER = "●";
+
+type ObjectClipboard = {
+  objects: DrawObject[];
+  pasteCount: number;
+};
 const LINE_MODE_STYLES = ["smooth", "light", "double"] as const satisfies readonly LineStyle[];
 const ELBOW_LINE_STYLES = ["light", "double", "dashed"] as const satisfies readonly LineStyle[];
 
@@ -364,6 +367,7 @@ export class DrawState {
   private selectedObjectId: string | null = null;
   private activeTextObjectId: string | null = null;
   private textEntryArmed = false;
+  private objectClipboard: ObjectClipboard | null = null;
 
   private pendingSelection: PendingSelection | null = null;
   private pendingLine: PendingLine | null = null;
@@ -457,6 +461,10 @@ export class DrawState {
 
   public get isTextEntryArmed(): boolean {
     return this.textEntryArmed;
+  }
+
+  public get hasClipboard(): boolean {
+    return this.objectClipboard !== null;
   }
 
   public get hasActivePointerInteraction(): boolean {
@@ -1130,6 +1138,91 @@ export class DrawState {
     this.cursorX = Math.min(this.canvasWidth - 1, updated.x + visibleCellCount(updated.content));
     this.cursorY = updated.y;
     this.setStatus(`Backspaced ${this.describeObject(updated)}.`);
+  }
+
+  /** Copies the selected object trees into the in-memory clipboard. */
+  public copySelection(): boolean {
+    const selectedTree = this.getSelectedObjectTrees();
+    if (selectedTree.length === 0) {
+      this.setStatus("Nothing selected to copy.");
+      return false;
+    }
+
+    this.objectClipboard = {
+      objects: cloneObjects(selectedTree),
+      pasteCount: 0,
+    };
+    this.setStatus(
+      selectedTree.length === 1
+        ? `Copied ${this.describeObject(selectedTree[0]!)}.`
+        : `Copied ${selectedTree.length} objects.`,
+    );
+    return true;
+  }
+
+  /** Cuts the selected object trees into the in-memory clipboard. */
+  public cutSelection(): boolean {
+    const selectedTree = this.getSelectedObjectTrees();
+    if (selectedTree.length === 0) {
+      this.setStatus("Nothing selected to cut.");
+      return false;
+    }
+
+    this.objectClipboard = {
+      objects: cloneObjects(selectedTree),
+      pasteCount: 0,
+    };
+    this.pushUndo();
+    const cutIds = new Set(selectedTree.map((object) => object.id));
+    this.setObjects(this.objects.filter((object) => !cutIds.has(object.id)));
+    this.setSelectedObjects([]);
+    this.activeTextObjectId = null;
+    this.textEntryArmed = false;
+    this.setStatus(
+      selectedTree.length === 1
+        ? `Cut ${this.describeObject(selectedTree[0]!)}.`
+        : `Cut ${selectedTree.length} objects.`,
+    );
+    return true;
+  }
+
+  /** Pastes fresh copies of the in-memory clipboard objects. */
+  public pasteClipboard(): boolean {
+    if (!this.objectClipboard || this.objectClipboard.objects.length === 0) {
+      this.setStatus("Clipboard is empty.");
+      return false;
+    }
+
+    this.pushUndo();
+    const indexedObjects = this.objectClipboard.objects.map((object, index) => ({ object, index }));
+    indexedObjects.sort((a, b) => a.object.z - b.object.z || a.index - b.index);
+
+    const idMap = new Map<string, string>();
+    for (const { object } of indexedObjects) {
+      idMap.set(object.id, this.createObjectId());
+    }
+
+    const pastedObjects = indexedObjects.map(({ object }) => ({
+      ...cloneObjects([object])[0]!,
+      id: idMap.get(object.id)!,
+      parentId: object.parentId ? (idMap.get(object.parentId) ?? null) : null,
+      z: this.allocateZIndex(),
+    }));
+    const offset = this.objectClipboard.pasteCount + 1;
+    const translatedObjects = this.translateObjectTreeWithinCanvas(pastedObjects, offset, offset);
+
+    this.objectClipboard.pasteCount += 1;
+    this.setObjects([...this.objects, ...translatedObjects]);
+    const pastedIds = translatedObjects.map((object) => object.id);
+    this.setSelectedObjects(pastedIds, pastedIds.at(-1) ?? null);
+    this.activeTextObjectId = null;
+    this.textEntryArmed = false;
+    this.setStatus(
+      translatedObjects.length === 1
+        ? `Pasted ${this.describeObject(translatedObjects[0]!)}.`
+        : `Pasted ${translatedObjects.length} objects.`,
+    );
+    return true;
   }
 
   /** Deletes the current selection or the topmost object under the cursor. */
@@ -2146,7 +2239,9 @@ export class DrawState {
         .filter((candidate) => rectContainsRect(getBoxContentBounds(candidate), bounds))
         .sort(
           (a, b) =>
-            getRectArea(getBoxContentBounds(a)) - getRectArea(getBoxContentBounds(b)) || a.z - b.z,
+            getRectArea(getBoxContentBounds(a)) - getRectArea(getBoxContentBounds(b)) ||
+            Number(b.id === object.parentId) - Number(a.id === object.parentId) ||
+            a.z - b.z,
         );
 
       return {
@@ -2293,9 +2388,11 @@ export class DrawState {
     return null;
   }
 
-  /** Returns every object whose selection bounds intersect the marquee. */
+  /** Returns every object with a rendered cell inside the marquee. */
   private getObjectsWithinSelectionRect(rect: Rect): DrawObject[] {
-    return this.objects.filter((object) => rectsIntersect(getObjectSelectionBounds(object), rect));
+    return this.objects.filter((object) =>
+      getObjectRenderCells(object).some((point) => rectContainsPoint(rect, point.x, point.y)),
+    );
   }
 
   /** Translates an object while clamping it inside the canvas bounds. */

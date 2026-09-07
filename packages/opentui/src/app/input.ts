@@ -179,7 +179,10 @@ export function handleKeyPress(
 
   dismissStartupLogo();
 
-  if ((cancelOnCtrlCEnabled && key.ctrl && name === "c") || (key.ctrl && name === "q")) {
+  if (
+    (cancelOnCtrlCEnabled && key.ctrl && !key.shift && name === "c") ||
+    (key.ctrl && name === "q")
+  ) {
     key.preventDefault();
     onCancel?.();
     return true;
@@ -253,6 +256,50 @@ export function handleKeyPress(
   if ((key.ctrl && name === "y") || (key.ctrl && key.shift && name === "z")) {
     key.preventDefault();
     state.redo();
+    requestRender();
+    return true;
+  }
+
+  const unmodifiedClipboardAction =
+    name === "c"
+      ? () => state.copySelection()
+      : name === "x"
+        ? () => state.cutSelection()
+        : name === "v"
+          ? () => state.pasteClipboard()
+          : null;
+  if (
+    state.currentMode === "select" &&
+    !key.ctrl &&
+    !key.meta &&
+    !key.option &&
+    !key.super &&
+    !key.hyper &&
+    unmodifiedClipboardAction
+  ) {
+    key.preventDefault();
+    unmodifiedClipboardAction();
+    requestRender();
+    return true;
+  }
+
+  if (key.ctrl && key.shift && name === "c") {
+    key.preventDefault();
+    state.copySelection();
+    requestRender();
+    return true;
+  }
+
+  if (key.ctrl && key.shift && name === "x") {
+    key.preventDefault();
+    state.cutSelection();
+    requestRender();
+    return true;
+  }
+
+  if (key.ctrl && key.shift && name === "v") {
+    key.preventDefault();
+    state.pasteClipboard();
     requestRender();
     return true;
   }
