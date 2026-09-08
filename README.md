@@ -48,6 +48,8 @@ termdraw
 
 Draw something, then press `Enter` or `Ctrl+S` to export the rendered art to stdout.
 
+In Select mode, drag a marquee around objects and press `C`, `X`, or `V` to copy, cut, or paste them. `Ctrl+Shift+C/X/V` are optional aliases when forwarded by the terminal, while plain `Ctrl+C` remains the terminal cancel shortcut.
+
 Press `Ctrl+D` to save the editable diagram as a native `.td.json` document. If you opened a diagram with `--load`, termDRAW reuses that path by default; otherwise it prompts for one inside the app.
 
 ## App usage

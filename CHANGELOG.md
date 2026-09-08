@@ -6,11 +6,13 @@ All notable user-visible changes to this project are documented in this file.
 
 ### Added
 
+- Object copy, cut, and paste with `C`, `X`, and `V` in Select mode, plus optional `Ctrl+Shift+C/X/V` aliases, including multi-object selections, nested objects, repeated paste offsets, and undo/redo support while preserving plain `Ctrl+C` as cancel.
 - `--clipboard` (`-c`) in `@termdraw/app`: Enter copies the rendered drawing to the system clipboard via OSC 52 and leaves the editor open, while Ctrl+S keeps exporting and exiting. Without the flag Enter behaves exactly as before.
 - `onCopy` option on `TermDrawApp`/`TermDrawRenderable` in `@termdraw/opentui`, letting a host decide how a copy request is fulfilled.
 
 ### Changed
 
+- Made marquee selection use objects' rendered cells instead of their rectangular bounds, avoiding false selections through empty areas around sparse lines and brush strokes.
 - Verified `@termdraw/pi` compatibility with Pi 0.84 and typechecked the extension against `@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui` 0.84.1.
 
 ### Fixed

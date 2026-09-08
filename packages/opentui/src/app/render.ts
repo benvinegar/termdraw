@@ -238,9 +238,9 @@ function drawFooterRow(
     : "Enter Finish Text/Export Art • Ctrl+S Export Art";
   const text =
     footerTextOverride ??
-    `B Brush • A Select • U Box • P Line • E Elbow • T Text • Esc Deselect • ${saveKeys}${
+    `A Select • C/X/V Copy/Cut/Paste • ${saveKeys} • Ctrl+Q Quit${
       canSaveDiagram ? " • Ctrl+D Save Diagram" : ""
-    } • Ctrl+Q Quit`;
+    } • B/U/P/E/T Tools • Esc Deselect`;
   const combined = `${text}  ${status}`;
   const padded = padToWidth(combined, Math.max(1, width - 2));
   frameBuffer.drawText(padded, 1, layout.footerY, COLORS.dim, COLORS.panel);

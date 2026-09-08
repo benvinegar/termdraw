@@ -922,6 +922,211 @@ describe("DrawState", () => {
     expect(state.getCompositeCell(11, 4)).toBe("┛");
   });
 
+  test("marquee selection only includes objects with rendered cells inside the rectangle", () => {
+    const state = new DrawState(30, 12);
+    state.loadDocument({
+      version: DRAW_DOCUMENT_VERSION,
+      objects: [
+        {
+          id: "obj-1",
+          type: "paint",
+          z: 1,
+          parentId: null,
+          color: "cyan",
+          points: [
+            { x: 0, y: 0 },
+            { x: 8, y: 6 },
+          ],
+          brush: "x",
+        },
+      ],
+    });
+    state.setMode("select");
+
+    const emptyStart = canvasPoint(state, 2, 2);
+    const emptyEnd = canvasPoint(state, 5, 4);
+    state.handlePointerEvent({ type: "down", button: MouseButton.LEFT, ...emptyStart });
+    state.handlePointerEvent({ type: "drag", button: MouseButton.LEFT, ...emptyEnd });
+    state.handlePointerEvent({ type: "up", button: MouseButton.LEFT, ...emptyEnd });
+    expect(state.getSelectedCellKeys().size).toBe(0);
+
+    const hitStart = canvasPoint(state, 7, 5);
+    const hitEnd = canvasPoint(state, 9, 7);
+    state.handlePointerEvent({ type: "down", button: MouseButton.LEFT, ...hitStart });
+    state.handlePointerEvent({ type: "drag", button: MouseButton.LEFT, ...hitEnd });
+    state.handlePointerEvent({ type: "up", button: MouseButton.LEFT, ...hitEnd });
+    expect(state.getSelectedCellKeys()).toEqual(new Set(["0,0", "8,6"]));
+  });
+
+  test("copies and pastes selected object trees with fresh identities", () => {
+    const state = new DrawState(40, 16);
+    state.loadDocument({
+      version: DRAW_DOCUMENT_VERSION,
+      objects: [
+        {
+          id: "obj-1",
+          type: "box",
+          z: 1,
+          parentId: null,
+          color: "cyan",
+          left: 1,
+          top: 1,
+          right: 8,
+          bottom: 5,
+          style: "double",
+        },
+        {
+          id: "obj-2",
+          type: "text",
+          z: 2,
+          parentId: "obj-1",
+          color: "yellow",
+          x: 3,
+          y: 3,
+          content: "Hi",
+          border: "none",
+        },
+      ],
+    });
+    state.setMode("select");
+
+    const marqueeStart = canvasPoint(state, 0, 0);
+    const marqueeEnd = canvasPoint(state, 8, 5);
+    state.handlePointerEvent({ type: "down", button: MouseButton.LEFT, ...marqueeStart });
+    state.handlePointerEvent({ type: "drag", button: MouseButton.LEFT, ...marqueeEnd });
+    state.handlePointerEvent({ type: "up", button: MouseButton.LEFT, ...marqueeEnd });
+
+    expect(state.copySelection()).toBe(true);
+    expect(state.hasClipboard).toBe(true);
+    expect(state.pasteClipboard()).toBe(true);
+
+    const pastedDocument = state.exportDocument();
+    expect(pastedDocument.objects).toHaveLength(4);
+    const pastedBox = pastedDocument.objects.find(
+      (object) => object.type === "box" && object.id !== "obj-1",
+    );
+    const pastedText = pastedDocument.objects.find(
+      (object) => object.type === "text" && object.id !== "obj-2",
+    );
+    expect(pastedBox).toMatchObject({
+      type: "box",
+      left: 2,
+      top: 2,
+      right: 9,
+      bottom: 6,
+      style: "double",
+      color: "cyan",
+    });
+    expect(pastedText).toMatchObject({
+      type: "text",
+      x: 4,
+      y: 4,
+      content: "Hi",
+      color: "yellow",
+      parentId: pastedBox?.id,
+    });
+    expect(pastedBox?.id).not.toBe("obj-1");
+    expect(pastedText?.id).not.toBe("obj-2");
+
+    state.undo();
+    expect(state.exportDocument().objects).toHaveLength(2);
+    state.redo();
+    expect(state.exportDocument().objects).toHaveLength(4);
+
+    expect(state.pasteClipboard()).toBe(true);
+    const repeatedPaste = state
+      .exportDocument()
+      .objects.find((object) => object.type === "box" && object.left === 3 && object.top === 3);
+    expect(repeatedPaste).toBeDefined();
+    expect(state.exportDocument().objects).toHaveLength(6);
+  });
+
+  test("keeps oversized repeated pastes anchored after the canvas shrinks", () => {
+    const state = new DrawState(8, 8);
+    state.loadDocument({
+      version: DRAW_DOCUMENT_VERSION,
+      objects: [
+        {
+          id: "obj-1",
+          type: "box",
+          z: 1,
+          parentId: null,
+          color: "white",
+          left: 0,
+          top: 0,
+          right: 5,
+          bottom: 5,
+          style: "light",
+        },
+      ],
+    });
+    state.setMode("select");
+
+    const boxCell = canvasPoint(state, 0, 0);
+    state.handlePointerEvent({ type: "down", button: MouseButton.LEFT, ...boxCell });
+    state.handlePointerEvent({ type: "up", button: MouseButton.LEFT, ...boxCell });
+    expect(state.copySelection()).toBe(true);
+
+    state.ensureCanvasSize(3, 3, { top: 0, right: 0, bottom: 0, left: 0 });
+    expect(state.pasteClipboard()).toBe(true);
+    expect(state.pasteClipboard()).toBe(true);
+
+    const pastedBoxes = state
+      .exportDocument()
+      .objects.filter((object) => object.type === "box" && object.id !== "obj-1");
+    expect(pastedBoxes).toHaveLength(2);
+    expect(
+      pastedBoxes.every((object) => object.type === "box" && object.left === 0 && object.top === 0),
+    ).toBe(true);
+  });
+
+  test("cuts selected object trees and can paste them back", () => {
+    const state = new DrawState(30, 12);
+    state.loadDocument({
+      version: DRAW_DOCUMENT_VERSION,
+      objects: [
+        {
+          id: "obj-1",
+          type: "box",
+          z: 1,
+          parentId: null,
+          color: "white",
+          left: 1,
+          top: 1,
+          right: 8,
+          bottom: 5,
+          style: "light",
+        },
+        {
+          id: "obj-2",
+          type: "text",
+          z: 2,
+          parentId: "obj-1",
+          color: "white",
+          x: 3,
+          y: 3,
+          content: "child",
+          border: "none",
+        },
+      ],
+    });
+    state.setMode("select");
+
+    const boxCell = canvasPoint(state, 1, 1);
+    state.handlePointerEvent({ type: "down", button: MouseButton.LEFT, ...boxCell });
+    state.handlePointerEvent({ type: "up", button: MouseButton.LEFT, ...boxCell });
+
+    expect(state.cutSelection()).toBe(true);
+    expect(state.exportDocument().objects).toHaveLength(0);
+    expect(state.pasteClipboard()).toBe(true);
+    expect(state.exportDocument().objects).toHaveLength(2);
+
+    state.undo();
+    expect(state.exportDocument().objects).toHaveLength(0);
+    state.undo();
+    expect(state.exportDocument().objects).toHaveLength(2);
+  });
+
   test("clearSelection deselects the active object", () => {
     const state = new DrawState(30, 12);
     state.setMode("box");
