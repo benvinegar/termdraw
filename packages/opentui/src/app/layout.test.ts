@@ -311,9 +311,13 @@ test("handleMouseEvent selects a tool from the full chrome palette", () => {
     state,
     chromeMode: "full",
     layout,
-    requestRender: () => {
+    executeCommand: (id) => {
+      expect(id).toBe("termdraw.tool.select");
+      state.setMode("select");
       renders += 1;
+      return true;
     },
+    requestRender: () => {},
     dismissStartupLogo: () => {
       dismissed += 1;
     },
@@ -338,6 +342,7 @@ test("handleMouseEvent swallows non-canvas chrome clicks", () => {
     state,
     chromeMode: "full",
     layout,
+    executeCommand: () => false,
     requestRender: () => {},
     dismissStartupLogo: () => {},
   });

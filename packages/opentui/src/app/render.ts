@@ -5,7 +5,12 @@
  * fallback message while leaving `TermDrawRenderable` to coordinate state and lifecycle.
  */
 import { TextAttributes, type OptimizedBuffer } from "@opentui/core";
-import type { DrawState } from "../draw-state.js";
+import type {
+  DrawCanvasCellProjection,
+  DrawCanvasProjection,
+  DrawStateSnapshot,
+  InkColor,
+} from "../draw-state.js";
 import { padToWidth, visibleCellCount } from "../text.js";
 import type {
   AppLayout,
@@ -26,6 +31,12 @@ import {
   getInkColorContrast,
   getInkColorValue,
 } from "./theme.js";
+
+const EMPTY_CANVAS_CELL: DrawCanvasCellProjection = {
+  character: " ",
+  inkColor: null,
+  kind: "content",
+};
 
 /** Draws a text segment and returns the next x-position in terminal-cell coordinates. */
 function drawSegment(
@@ -74,11 +85,9 @@ export function drawChrome(
   frameBuffer: OptimizedBuffer,
   width: number,
   height: number,
-  state: DrawState,
+  editor: DrawStateSnapshot["editor"],
   layout: AppLayout,
-  footerTextOverride: string | null,
-  canSaveDiagram: boolean,
-  canCopy: boolean,
+  footerText: string,
 ): void {
   drawHorizontalBorder(frameBuffer, width, 0, "╭", "╮");
   drawHorizontalBorder(frameBuffer, width, height - 1, "╰", "╯");
@@ -91,24 +100,16 @@ export function drawChrome(
     frameBuffer.setCell(layout.dividerX, y, "│", COLORS.border, COLORS.panel);
   }
 
-  drawHeaderRow(frameBuffer, width, state, layout);
+  drawHeaderRow(frameBuffer, width, editor, layout);
   drawHeaderDivider(frameBuffer, width, layout);
-  drawFooterRow(
-    frameBuffer,
-    width,
-    state.currentStatus,
-    layout,
-    footerTextOverride,
-    canSaveDiagram,
-    canCopy,
-  );
+  drawFooterRow(frameBuffer, width, editor.status, layout, footerText);
 }
 
 /** Draws the header row describing the active tool, style, and color. */
 function drawHeaderRow(
   frameBuffer: OptimizedBuffer,
   width: number,
-  state: DrawState,
+  editor: DrawStateSnapshot["editor"],
   layout: AppLayout,
 ): void {
   const y = 1;
@@ -122,34 +123,33 @@ function drawHeaderRow(
   x = drawSegment(frameBuffer, x, y, "termDRAW!", COLORS.accent, COLORS.panel, TextAttributes.BOLD);
   x = drawSegment(frameBuffer, x, y, "  tool:", COLORS.dim, COLORS.panel);
 
-  const modeLabel = state.getModeLabel();
+  const modeLabel = editor.modeLabel;
   const modeColor =
-    state.currentMode === "select"
+    editor.mode === "select"
       ? COLORS.select
-      : state.currentMode === "line" || state.currentMode === "elbow"
+      : editor.mode === "line" || editor.mode === "elbow"
         ? COLORS.accent
-        : state.currentMode === "box"
+        : editor.mode === "box"
           ? COLORS.warning
-          : state.currentMode === "paint"
+          : editor.mode === "paint"
             ? COLORS.paint
             : COLORS.success;
   x = drawSegment(frameBuffer, x, y, modeLabel, modeColor, COLORS.panel, TextAttributes.BOLD);
 
-  if (state.currentMode === "paint") {
-    const brush = BRUSH_OPTIONS.find((option) => option.brush === state.currentBrush);
+  if (editor.mode === "paint") {
+    const brush = BRUSH_OPTIONS.find((option) => option.brush === editor.brush);
     x = drawSegment(frameBuffer, x, y, "  brush:", COLORS.dim, COLORS.panel);
     x = drawSegment(
       frameBuffer,
       x,
       y,
-      brush ? `${brush.sample} ${brush.label}` : `"${state.currentBrush}"`,
+      brush ? `${brush.sample} ${brush.label}` : `"${editor.brush}"`,
       COLORS.paint,
       COLORS.panel,
     );
-  } else if (state.currentMode === "box") {
+  } else if (editor.mode === "box") {
     const boxStyle =
-      BOX_STYLE_OPTIONS.find((option) => option.style === state.currentBoxStyle) ??
-      BOX_STYLE_OPTIONS[0]!;
+      BOX_STYLE_OPTIONS.find((option) => option.style === editor.boxStyle) ?? BOX_STYLE_OPTIONS[0]!;
     x = drawSegment(frameBuffer, x, y, "  style:", COLORS.dim, COLORS.panel);
     x = drawSegment(
       frameBuffer,
@@ -159,12 +159,10 @@ function drawHeaderRow(
       COLORS.warning,
       COLORS.panel,
     );
-  } else if (state.currentMode === "line" || state.currentMode === "elbow") {
-    const lineStyleOptions =
-      state.currentMode === "elbow" ? ELBOW_STYLE_OPTIONS : LINE_STYLE_OPTIONS;
+  } else if (editor.mode === "line" || editor.mode === "elbow") {
+    const lineStyleOptions = editor.mode === "elbow" ? ELBOW_STYLE_OPTIONS : LINE_STYLE_OPTIONS;
     const lineStyle =
-      lineStyleOptions.find((option) => option.style === state.currentLineStyle) ??
-      lineStyleOptions[0]!;
+      lineStyleOptions.find((option) => option.style === editor.lineStyle) ?? lineStyleOptions[0]!;
     x = drawSegment(frameBuffer, x, y, "  style:", COLORS.dim, COLORS.panel);
     x = drawSegment(
       frameBuffer,
@@ -174,9 +172,9 @@ function drawHeaderRow(
       COLORS.accent,
       COLORS.panel,
     );
-  } else if (state.currentMode === "text") {
+  } else if (editor.mode === "text") {
     const textBorder =
-      TEXT_BORDER_OPTIONS.find((option) => option.style === state.currentTextBorderMode) ??
+      TEXT_BORDER_OPTIONS.find((option) => option.style === editor.textBorderMode) ??
       TEXT_BORDER_OPTIONS[0]!;
     x = drawSegment(frameBuffer, x, y, "  border:", COLORS.dim, COLORS.panel);
     x = drawSegment(
@@ -195,7 +193,7 @@ function drawHeaderRow(
     x,
     y,
     "●",
-    getInkColorValue(state.currentInkColor),
+    getInkColorValue(editor.inkColor),
     COLORS.panel,
     TextAttributes.BOLD,
   );
@@ -228,20 +226,9 @@ function drawFooterRow(
   width: number,
   status: string,
   layout: AppLayout,
-  footerTextOverride: string | null,
-  canSaveDiagram: boolean,
-  canCopy: boolean,
+  footerText: string,
 ): void {
-  // Enter first finishes active text entry; outside text entry it copies or exports as before.
-  const saveKeys = canCopy
-    ? "Enter Finish Text/Copy • Ctrl+S Export Art"
-    : "Enter Finish Text/Export Art • Ctrl+S Export Art";
-  const text =
-    footerTextOverride ??
-    `B Brush • A Select • U Box • P Line • E Elbow • T Text • Esc Deselect • ${saveKeys}${
-      canSaveDiagram ? " • Ctrl+D Save Diagram" : ""
-    } • Ctrl+Q Quit`;
-  const combined = `${text}  ${status}`;
+  const combined = `${footerText}  ${status}`;
   const padded = padToWidth(combined, Math.max(1, width - 2));
   frameBuffer.drawText(padded, 1, layout.footerY, COLORS.dim, COLORS.panel);
 }
@@ -249,7 +236,7 @@ function drawFooterRow(
 /** Draws the right-hand palette region including tool buttons, styles, and colors. */
 export function drawToolPalette(
   frameBuffer: OptimizedBuffer,
-  state: DrawState,
+  editor: DrawStateSnapshot["editor"],
   layout: AppLayout,
   toolButtons: ToolButton[],
   styleButtons: StyleButton[],
@@ -263,20 +250,20 @@ export function drawToolPalette(
   }
 
   for (const button of toolButtons) {
-    drawToolButton(frameBuffer, state.currentMode, button);
+    drawToolButton(frameBuffer, editor.mode, button);
   }
 
   for (const button of styleButtons) {
-    drawStyleButton(frameBuffer, state, button);
+    drawStyleButton(frameBuffer, editor, button);
   }
 
-  drawColorPicker(frameBuffer, state.currentInkColor, colorSwatches);
+  drawColorPicker(frameBuffer, editor.inkColor, colorSwatches);
 }
 
 /** Draws a single boxed tool button. */
 function drawToolButton(
   frameBuffer: OptimizedBuffer,
-  currentMode: DrawState["currentMode"],
+  currentMode: DrawStateSnapshot["editor"]["mode"],
   button: ToolButton,
 ): void {
   const isActive = currentMode === button.mode;
@@ -325,17 +312,17 @@ function drawToolButton(
 /** Draws a single contextual style row beneath the active tool. */
 function drawStyleButton(
   frameBuffer: OptimizedBuffer,
-  state: DrawState,
+  editor: DrawStateSnapshot["editor"],
   button: StyleButton,
 ): void {
   const isActive =
-    state.currentMode === "box"
-      ? state.currentBoxStyle === button.style
-      : state.currentMode === "line" || state.currentMode === "elbow"
-        ? state.currentLineStyle === button.style
-        : state.currentMode === "text"
-          ? state.currentTextBorderMode === button.style
-          : state.currentBrush === button.style;
+    editor.mode === "box"
+      ? editor.boxStyle === button.style
+      : editor.mode === "line" || editor.mode === "elbow"
+        ? editor.lineStyle === button.style
+        : editor.mode === "text"
+          ? editor.textBorderMode === button.style
+          : editor.brush === button.style;
   const fg = isActive ? COLORS.panel : COLORS.text;
   const bg = isActive ? COLORS.warning : COLORS.panel;
   const text = padToWidth(`${button.sample} ${button.label}`, button.width);
@@ -352,7 +339,7 @@ function drawStyleButton(
 /** Draws the full set of ink-color swatches. */
 function drawColorPicker(
   frameBuffer: OptimizedBuffer,
-  currentInkColor: DrawState["currentInkColor"],
+  currentInkColor: InkColor,
   colorSwatches: ColorSwatch[],
 ): void {
   for (const swatch of colorSwatches) {
@@ -363,7 +350,7 @@ function drawColorPicker(
 /** Draws a single ink-color swatch. */
 function drawColorSwatch(
   frameBuffer: OptimizedBuffer,
-  currentInkColor: DrawState["currentInkColor"],
+  currentInkColor: InkColor,
   swatch: ColorSwatch,
 ): void {
   const isActive = currentInkColor === swatch.color;
@@ -381,49 +368,37 @@ function drawColorSwatch(
 }
 
 /** Draws the retained canvas contents plus selection, marquee, preview, and cursor overlays. */
-export function drawCanvas(frameBuffer: OptimizedBuffer, state: DrawState): void {
-  const preview = state.getActivePreviewCharacters();
-  const marqueeChars = state.getSelectionMarqueeCharacters();
-  const selectedCells = state.getSelectedCellKeys();
-  const handleChars = state.getSelectionHandleCharacters();
+export function drawCanvas(frameBuffer: OptimizedBuffer, projection: DrawCanvasProjection): void {
+  for (let y = 0; y < projection.viewport.height; y += 1) {
+    const rowY = projection.viewport.top + y;
 
-  for (let y = 0; y < state.height; y += 1) {
-    const rowY = state.canvasTopRow + y;
-
-    for (let x = 0; x < state.width; x += 1) {
-      const key = `${x},${y}`;
-      const handleChar = handleChars.get(key);
-      const marqueeChar = marqueeChars.get(key);
-      const previewChar = preview.get(key);
-      const cell = handleChar ?? marqueeChar ?? previewChar ?? state.getCompositeCell(x, y);
-      const cellColor = state.getCompositeColor(x, y);
-      const isCursor = x === state.currentCursorX && y === state.currentCursorY;
-      const isSelected = selectedCells.has(key);
-      const isHandle = handleChar !== undefined;
-      const isMarquee = marqueeChar !== undefined;
-      const fg = isCursor
-        ? COLORS.cursorFg
-        : isHandle
-          ? COLORS.handleFg
-          : isMarquee
-            ? COLORS.select
-            : isSelected
-              ? COLORS.selectionFg
-              : previewChar
-                ? getInkColorValue(state.currentInkColor)
-                : cellColor
-                  ? getInkColorValue(cellColor)
+    for (let x = 0; x < projection.viewport.width; x += 1) {
+      const cell = projection.cells.get(`${x},${y}`) ?? EMPTY_CANVAS_CELL;
+      const fg =
+        cell.kind === "cursor"
+          ? COLORS.cursorFg
+          : cell.kind === "handle"
+            ? COLORS.handleFg
+            : cell.kind === "marquee"
+              ? COLORS.select
+              : cell.kind === "selection"
+                ? COLORS.selectionFg
+                : cell.inkColor
+                  ? getInkColorValue(cell.inkColor)
                   : COLORS.text;
-      const bg = isCursor
-        ? COLORS.cursorBg
-        : isHandle
-          ? COLORS.handleBg
-          : isSelected
-            ? COLORS.selectionBg
-            : COLORS.panel;
+      const bg =
+        cell.kind === "cursor"
+          ? COLORS.cursorBg
+          : cell.kind === "handle"
+            ? COLORS.handleBg
+            : cell.kind === "selection"
+              ? COLORS.selectionBg
+              : COLORS.panel;
       const attributes =
-        isCursor || isSelected || isHandle || isMarquee ? TextAttributes.BOLD : TextAttributes.NONE;
-      frameBuffer.setCell(x + state.canvasLeftCol, rowY, cell, fg, bg, attributes);
+        cell.kind !== "content" && cell.kind !== "preview"
+          ? TextAttributes.BOLD
+          : TextAttributes.NONE;
+      frameBuffer.setCell(x + projection.viewport.left, rowY, cell.character, fg, bg, attributes);
     }
   }
 }

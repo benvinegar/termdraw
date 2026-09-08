@@ -6,6 +6,7 @@
  */
 import type { RGBA } from "@opentui/core";
 import type { BoxStyle, DrawMode, InkColor, LineStyle, TextBorderMode } from "../draw-state.js";
+import type { TermDrawCommandId } from "./commands.js";
 
 /** Describes whether the renderable should show the full chrome or just the editor surface. */
 export type ChromeMode = "full" | "editor";
@@ -24,6 +25,7 @@ export type AppLayout = {
 /** Describes a clickable tool button in the right-hand palette. */
 export type ToolButton = {
   mode: DrawMode;
+  commandId: TermDrawCommandId;
   left: number;
   top: number;
   width: number;

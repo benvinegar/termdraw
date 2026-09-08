@@ -78,12 +78,42 @@ function getPaletteButtonLeft(layout: AppLayout): number {
 export function getToolButtons(layout: AppLayout, currentMode: DrawMode): ToolButton[] {
   const buttonLeft = getPaletteButtonLeft(layout);
   const definitions: Omit<ToolButton, "left" | "top" | "width" | "height">[] = [
-    { mode: "select", icon: "◎", label: "Select", color: COLORS.select },
-    { mode: "box", icon: "▣", label: "Box", color: COLORS.warning },
-    { mode: "line", icon: "╱", label: "Line", color: COLORS.accent },
-    { mode: "elbow", icon: "└", label: "Elbow", color: COLORS.accent },
-    { mode: "paint", icon: "▒", label: "Brush", color: COLORS.paint },
-    { mode: "text", icon: "T", label: "Text", color: COLORS.success },
+    {
+      mode: "select",
+      commandId: "termdraw.tool.select",
+      icon: "◎",
+      label: "Select",
+      color: COLORS.select,
+    },
+    { mode: "box", commandId: "termdraw.tool.box", icon: "▣", label: "Box", color: COLORS.warning },
+    {
+      mode: "line",
+      commandId: "termdraw.tool.line",
+      icon: "╱",
+      label: "Line",
+      color: COLORS.accent,
+    },
+    {
+      mode: "elbow",
+      commandId: "termdraw.tool.elbow",
+      icon: "└",
+      label: "Elbow",
+      color: COLORS.accent,
+    },
+    {
+      mode: "paint",
+      commandId: "termdraw.tool.paint",
+      icon: "▒",
+      label: "Brush",
+      color: COLORS.paint,
+    },
+    {
+      mode: "text",
+      commandId: "termdraw.tool.text",
+      icon: "T",
+      label: "Text",
+      color: COLORS.success,
+    },
   ];
 
   const buttons: ToolButton[] = [];

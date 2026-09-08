@@ -8,6 +8,7 @@
 - `TermDrawEditor` for the bare editor surface
 - `TermDraw` as an alias for `TermDrawApp`
 - renderables and helpers for saved output and CLI help text
+- a typed command catalog and immutable state/canvas projections for host integrations
 
 ## Install
 
@@ -53,6 +54,13 @@ createRoot(renderer).render(
 - `buildHelpText`
 - `registerTermDrawComponent`
 - `registerTermDrawComponents`
+- `TERM_DRAW_COMMAND_CATALOG` and `TermDrawCommandId`
+- `DrawStateSnapshot` and `DrawCanvasProjection`
+
+`TermDrawRenderable.executeCommand(id)` invokes a command without synthesizing a key event.
+Use the `onCommand` option to observe accepted keyboard, mouse, and programmatic commands through
+the same stable command IDs. `getSnapshot()` and `getCanvasProjection()` expose detached,
+renderer-neutral views without granting access to the mutable editor coordinator.
 
 ## Standalone app
 

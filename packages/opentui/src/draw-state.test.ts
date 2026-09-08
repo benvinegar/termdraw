@@ -759,6 +759,11 @@ describe("DrawState", () => {
     expect(selected.has("1,1")).toBe(true);
     expect(selected.has("4,3")).toBe(true);
     expect(selected.has("2,2")).toBe(true);
+    expect(state.getCanvasProjection().cells.get("1,1")).toEqual({
+      character: " ",
+      inkColor: null,
+      kind: "selection",
+    });
 
     const dragFromVirtualBox = canvasPoint(state, 1, 1);
     const dragEnd = canvasPoint(state, 3, 2);
@@ -1060,6 +1065,64 @@ describe("DrawState", () => {
     const [object] = document.objects;
     expect(object?.type).toBe("elbow");
     expect(object?.type === "elbow" ? object.style : null).toBe("light");
+  });
+
+  test("viewport resizing does not mutate document coordinates", () => {
+    const state = new DrawState(40, 20, { left: 0, top: 0, right: 0, bottom: 0 });
+    state.loadDocument({
+      version: DRAW_DOCUMENT_VERSION,
+      objects: [
+        {
+          id: "obj-1",
+          type: "box",
+          z: 1,
+          parentId: null,
+          color: "white",
+          left: 25,
+          top: 10,
+          right: 35,
+          bottom: 15,
+          style: "light",
+        },
+      ],
+    });
+    const before = state.exportDocument();
+
+    state.ensureCanvasSize(10, 5, { left: 0, top: 0, right: 0, bottom: 0 });
+    state.ensureCanvasSize(40, 20, { left: 0, top: 0, right: 0, bottom: 0 });
+
+    expect(state.exportDocument()).toEqual(before);
+  });
+
+  test("state and canvas projections are detached from mutable internals", () => {
+    const state = new DrawState(20, 10, { left: 0, top: 0, right: 0, bottom: 0 });
+    state.loadDocument({
+      version: DRAW_DOCUMENT_VERSION,
+      objects: [
+        {
+          id: "obj-1",
+          type: "paint",
+          z: 1,
+          parentId: null,
+          color: "cyan",
+          points: [{ x: 2, y: 3 }],
+          brush: "#",
+        },
+      ],
+    });
+
+    const snapshot = state.getSnapshot();
+    const projection = state.getCanvasProjection();
+    (snapshot.document.objects[0] as { id: string }).id = "changed";
+
+    expect(state.exportDocument().objects[0]!.id).toBe("obj-1");
+    expect(projection.cells.get("2,3")).toEqual({
+      character: "#",
+      inkColor: "cyan",
+      kind: "content",
+    });
+    expect(projection.cells.get("0,0")?.kind).toBe("cursor");
+    expect(projection.viewport).toEqual({ width: 20, height: 10, left: 0, top: 0 });
   });
 
   test("parseDrawDocument rejects invalid document shapes with clear errors", () => {
