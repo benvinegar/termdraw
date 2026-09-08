@@ -137,7 +137,7 @@ test("help text documents tool hotkeys and automatic line rendering", () => {
   expect(help).toContain("choose Single, Double, or Dashed connectors; R toggles route");
   expect(help).toContain("choose from preset brush stencils in the palette");
   expect(help).toContain("--load <file>");
-  expect(help).toContain("Ctrl+Shift+C/X/V copy / cut / paste selected objects");
+  expect(help).toContain("C / X / V       copy / cut / paste in Select mode");
   expect(help).toContain("Ctrl+D          save diagram (.td.json)");
   expect(help).toContain("route Elbow mode vertical-first for horizontal arrows");
 });

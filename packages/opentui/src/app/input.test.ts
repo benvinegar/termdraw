@@ -232,6 +232,60 @@ test("handleKeyPress routes Ctrl+Shift clipboard shortcuts without cancelling", 
   expect(renders).toBe(3);
 });
 
+test("handleKeyPress provides single-key clipboard actions in Select mode", () => {
+  const calls: string[] = [];
+  const state = createMockState({
+    currentMode: "select",
+    copySelection: () => calls.push("copy"),
+    cutSelection: () => calls.push("cut"),
+    pasteClipboard: () => calls.push("paste"),
+  });
+
+  for (const name of ["c", "x", "v"]) {
+    const { event, wasPrevented } = createKeyEvent(name, { raw: name });
+    expect(
+      handleKeyPress({
+        key: event as never,
+        state: state as never,
+        cancelOnCtrlCEnabled: true,
+        onSave: null,
+        onSaveDiagram: null,
+        onCancel: null,
+        requestRender: () => {},
+        dismissStartupLogo: () => {},
+      }),
+    ).toBe(true);
+    expect(wasPrevented()).toBe(true);
+  }
+
+  expect(calls).toEqual(["copy", "cut", "paste"]);
+});
+
+test("handleKeyPress does not treat shifted letters as Select mode clipboard actions", () => {
+  let copies = 0;
+  const { event, wasPrevented } = createKeyEvent("c", { raw: "C", shift: true });
+
+  expect(
+    handleKeyPress({
+      key: event as never,
+      state: createMockState({
+        currentMode: "select",
+        copySelection: () => {
+          copies += 1;
+        },
+      }) as never,
+      cancelOnCtrlCEnabled: true,
+      onSave: null,
+      onSaveDiagram: null,
+      onCancel: null,
+      requestRender: () => {},
+      dismissStartupLogo: () => {},
+    }),
+  ).toBe(false);
+  expect(wasPrevented()).toBe(false);
+  expect(copies).toBe(0);
+});
+
 test("handleKeyPress switches tools with hotkeys outside text entry", () => {
   let mode: string | null = null;
   let renders = 0;

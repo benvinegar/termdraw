@@ -238,7 +238,7 @@ function drawFooterRow(
     : "Enter Finish Text/Export Art • Ctrl+S Export Art";
   const text =
     footerTextOverride ??
-    `A Select • Ctrl+Shift+C/X/V Copy/Cut/Paste • ${saveKeys} • Ctrl+Q Quit${
+    `A Select • C/X/V Copy/Cut/Paste • ${saveKeys} • Ctrl+Q Quit${
       canSaveDiagram ? " • Ctrl+D Save Diagram" : ""
     } • B/U/P/E/T Tools • Esc Deselect`;
   const combined = `${text}  ${status}`;

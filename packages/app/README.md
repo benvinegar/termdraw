@@ -26,7 +26,7 @@ npm install --global @termdraw/app
 termdraw
 ```
 
-Draw something, then press `Enter` or `Ctrl+S` to write the result to stdout. In Select mode, drag a marquee around objects and use `Ctrl+Shift+C/X/V` to copy, cut, or paste them when those shortcuts are forwarded by the terminal. `Ctrl+C` remains the terminal cancel shortcut.
+Draw something, then press `Enter` or `Ctrl+S` to write the result to stdout. In Select mode, drag a marquee around objects and press `C`, `X`, or `V` to copy, cut, or paste them. `Ctrl+Shift+C/X/V` are optional aliases when forwarded by the terminal, while plain `Ctrl+C` remains the terminal cancel shortcut.
 
 ## Usage
 

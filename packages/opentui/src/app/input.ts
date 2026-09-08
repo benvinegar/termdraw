@@ -260,6 +260,30 @@ export function handleKeyPress(
     return true;
   }
 
+  const selectModeClipboardAction =
+    name === "c"
+      ? () => state.copySelection()
+      : name === "x"
+        ? () => state.cutSelection()
+        : name === "v"
+          ? () => state.pasteClipboard()
+          : null;
+  if (
+    state.currentMode === "select" &&
+    !key.ctrl &&
+    !key.meta &&
+    !key.option &&
+    !key.shift &&
+    !key.super &&
+    !key.hyper &&
+    selectModeClipboardAction
+  ) {
+    key.preventDefault();
+    selectModeClipboardAction();
+    requestRender();
+    return true;
+  }
+
   if (key.ctrl && key.shift && name === "c") {
     key.preventDefault();
     state.copySelection();
