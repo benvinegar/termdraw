@@ -100,6 +100,72 @@ export type DrawDocument = {
   objects: DrawObject[];
 };
 
+export type DeepReadonly<T> = T extends (...args: never[]) => unknown
+  ? T
+  : T extends readonly (infer Item)[]
+    ? readonly DeepReadonly<Item>[]
+    : T extends object
+      ? { readonly [Key in keyof T]: DeepReadonly<T[Key]> }
+      : T;
+
+export type DrawDocumentSnapshot = DeepReadonly<DrawDocument>;
+
+export type DrawEditorSnapshot = {
+  readonly mode: DrawMode;
+  readonly modeLabel: string;
+  readonly brush: string;
+  readonly boxStyle: BoxStyle;
+  readonly lineStyle: LineStyle;
+  readonly elbowOrientation: ElbowOrientation;
+  readonly textBorderMode: TextBorderMode;
+  readonly inkColor: InkColor;
+  readonly status: string;
+  readonly cursor: Readonly<Point>;
+  readonly selectedObjectIds: readonly string[];
+  readonly primarySelectedObjectId: string | null;
+  readonly activeTextObjectId: string | null;
+  readonly textEntryArmed: boolean;
+  readonly isEditingText: boolean;
+  readonly canUndo: boolean;
+  readonly canRedo: boolean;
+};
+
+export type DrawViewportSnapshot = {
+  readonly width: number;
+  readonly height: number;
+  readonly left: number;
+  readonly top: number;
+};
+
+/** Immutable public projection of editor state, separate from transient interactions and caches. */
+export type DrawStateSnapshot = {
+  readonly document: DrawDocumentSnapshot;
+  readonly editor: DrawEditorSnapshot;
+  readonly viewport: DrawViewportSnapshot;
+};
+
+export type DrawCanvasCellKind =
+  | "content"
+  | "preview"
+  | "selection"
+  | "marquee"
+  | "handle"
+  | "cursor";
+
+/** One renderer-neutral cell in the current canvas projection. */
+export type DrawCanvasCellProjection = {
+  readonly character: string;
+  readonly inkColor: InkColor | null;
+  readonly kind: DrawCanvasCellKind;
+};
+
+/** Immutable canvas projection consumed by renderers instead of mutable DrawState internals. */
+export type DrawCanvasProjection = {
+  readonly viewport: DrawViewportSnapshot;
+  /** Sparse cells keyed as `x,y`; omitted coordinates are blank content cells. */
+  readonly cells: ReadonlyMap<string, DrawCanvasCellProjection>;
+};
+
 export type Snapshot = {
   objects: DrawObject[];
   selectedObjectIds: string[];

@@ -5,7 +5,7 @@
  * until the user begins interacting with the editor.
  */
 import { RGBA, TextAttributes, type OptimizedBuffer } from "@opentui/core";
-import type { DrawState } from "../draw-state.js";
+import type { DrawStateSnapshot } from "../draw-state.js";
 import { visibleCellCount } from "../text.js";
 import type { AppLayout, ChromeMode } from "./types.js";
 import { COLORS } from "./theme.js";
@@ -48,7 +48,7 @@ function getStartupLogoCaptionColor(): RGBA {
 /** Draws the startup logo overlay when it is enabled and still visible. */
 export function renderStartupLogo(
   frameBuffer: OptimizedBuffer,
-  state: DrawState,
+  viewport: DrawStateSnapshot["viewport"],
   chromeMode: ChromeMode,
   layout: AppLayout | null,
   startupLogoEnabled: boolean,
@@ -60,9 +60,9 @@ export function renderStartupLogo(
   const logoHeight = STARTUP_LOGO_LINES.length;
   const captionWidth = visibleCellCount(STARTUP_LOGO_CAPTION);
   const availableWidth =
-    chromeMode === "full" && layout ? layout.dividerX - state.canvasLeftCol : state.width;
+    chromeMode === "full" && layout ? layout.dividerX - viewport.left : viewport.width;
   const availableHeight =
-    chromeMode === "full" && layout ? layout.bodyBottom - state.canvasTopRow + 1 : state.height;
+    chromeMode === "full" && layout ? layout.bodyBottom - viewport.top + 1 : viewport.height;
   const showCaption = availableWidth >= captionWidth && availableHeight >= logoHeight + 2;
   const overlayHeight = showCaption ? logoHeight + 2 : logoHeight;
 
@@ -70,12 +70,12 @@ export function renderStartupLogo(
     return;
   }
 
-  const startY = state.canvasTopRow + Math.floor((availableHeight - overlayHeight) / 2);
+  const startY = viewport.top + Math.floor((availableHeight - overlayHeight) / 2);
 
   for (const [rowIndex, line] of STARTUP_LOGO_LINES.entries()) {
     const y = startY + rowIndex;
     const lineWidth = visibleCellCount(line);
-    const startX = state.canvasLeftCol + Math.floor((availableWidth - lineWidth) / 2);
+    const startX = viewport.left + Math.floor((availableWidth - lineWidth) / 2);
     for (const [colIndex, char] of Array.from(line).entries()) {
       if (char === " ") continue;
       const x = startX + colIndex;
@@ -87,7 +87,7 @@ export function renderStartupLogo(
 
   if (showCaption) {
     const captionY = startY + logoHeight + 1;
-    const captionX = state.canvasLeftCol + Math.floor((availableWidth - captionWidth) / 2);
+    const captionX = viewport.left + Math.floor((availableWidth - captionWidth) / 2);
     frameBuffer.drawText(
       STARTUP_LOGO_CAPTION,
       captionX,

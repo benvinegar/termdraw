@@ -1,18 +1,11 @@
 /**
  * Theme constants and option tables for the termDRAW app renderable.
  *
- * This file centralizes palette sizing, colors, tool hotkeys, canvas insets, and the option
+ * This file centralizes palette sizing, colors, canvas insets, and the option
  * lists used to render the chrome and interpret palette interactions.
  */
 import { RGBA } from "@opentui/core";
-import type {
-  BoxStyle,
-  CanvasInsets,
-  DrawMode,
-  InkColor,
-  LineStyle,
-  TextBorderMode,
-} from "../draw-state.js";
+import type { BoxStyle, CanvasInsets, InkColor, LineStyle, TextBorderMode } from "../draw-state.js";
 import type { ChromeMode } from "./types.js";
 
 /** Minimum width required to render the full-chrome UI. */
@@ -114,16 +107,6 @@ const INK_COLOR_VALUES: Record<InkColor, RGBA> = {
   cyan: RGBA.fromHex("#06b6d4"),
   blue: RGBA.fromHex("#3b82f6"),
   magenta: RGBA.fromHex("#d946ef"),
-};
-
-/** Keyboard shortcuts that switch tools outside text entry. */
-export const TOOL_HOTKEYS: Partial<Record<string, DrawMode>> = {
-  a: "select",
-  b: "paint",
-  e: "elbow",
-  p: "line",
-  t: "text",
-  u: "box",
 };
 
 /** Insets used when rendering the full app chrome around the canvas. */

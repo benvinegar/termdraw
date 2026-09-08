@@ -13,7 +13,23 @@ import {
   type RenderContext,
   type RenderableOptions,
 } from "@opentui/core";
-import { DrawState, INK_COLORS, truncateToCells, type DrawDocument } from "./draw-state.js";
+import {
+  DrawState,
+  INK_COLORS,
+  truncateToCells,
+  type DrawCanvasProjection,
+  type DrawDocument,
+  type DrawStateSnapshot,
+} from "./draw-state.js";
+import {
+  buildTermDrawFooterText,
+  executeTermDrawCommand,
+  getTermDrawCommandKeyLabel,
+  type TermDrawCommandContext,
+  type TermDrawCommandEvent,
+  type TermDrawCommandId,
+  type TermDrawCommandSource,
+} from "./app/commands.js";
 import {
   getColorSwatches,
   getContextualStyleButtons,
@@ -64,6 +80,8 @@ export interface TermDrawRenderableOptions extends RenderableOptions<FrameBuffer
   onCopy?: (art: string) => void;
   onSaveDiagram?: (document: DrawDocument, path: string) => void | Promise<void>;
   onCancel?: () => void;
+  /** Observes accepted commands regardless of whether they came from keyboard, mouse, or API. */
+  onCommand?: (event: TermDrawCommandEvent) => void;
   initialDocument?: DrawDocument;
   diagramPath?: string;
   autoFocus?: boolean;
@@ -88,6 +106,7 @@ export class TermDrawRenderable extends FrameBufferRenderable {
     | ((document: DrawDocument, path: string) => void | Promise<void>)
     | null = null;
   private onCancelCallback: (() => void) | null = null;
+  private onCommandCallback: ((event: TermDrawCommandEvent) => void) | null = null;
   private pendingInitialDocument: DrawDocument | null = null;
   private diagramPath: string | null = null;
   private readonly diagramSaveState: DiagramSaveState = {
@@ -109,6 +128,7 @@ export class TermDrawRenderable extends FrameBufferRenderable {
       onCopy,
       onSaveDiagram,
       onCancel,
+      onCommand,
       initialDocument,
       diagramPath,
       autoFocus = false,
@@ -135,6 +155,7 @@ export class TermDrawRenderable extends FrameBufferRenderable {
     this.onCopy = onCopy;
     this.onSaveDiagram = onSaveDiagram;
     this.onCancel = onCancel;
+    this.onCommand = onCommand;
     this.pendingInitialDocument = initialDocument ?? null;
     this.diagramPath = diagramPath?.trim() ? diagramPath : null;
     this.startupLogoDismissed = initialDocument !== undefined;
@@ -166,6 +187,11 @@ export class TermDrawRenderable extends FrameBufferRenderable {
   /** Sets the callback invoked when the user cancels out of the editor. */
   public set onCancel(handler: (() => void) | undefined) {
     this.onCancelCallback = handler ?? null;
+  }
+
+  /** Sets the observer invoked after a named command has been accepted. */
+  public set onCommand(handler: ((event: TermDrawCommandEvent) => void) | undefined) {
+    this.onCommandCallback = handler ?? null;
   }
 
   /** Sets the callback invoked when the user saves the editable diagram document. */
@@ -219,6 +245,24 @@ export class TermDrawRenderable extends FrameBufferRenderable {
     return this.state.exportDocument();
   }
 
+  /** Returns an immutable state projection suitable for hosts and alternate renderers. */
+  public getSnapshot(): DrawStateSnapshot {
+    this.loadPendingInitialDocumentIfNeeded();
+    return this.state.getSnapshot();
+  }
+
+  /** Returns the renderer-neutral projection of the current canvas. */
+  public getCanvasProjection(): DrawCanvasProjection {
+    this.loadPendingInitialDocumentIfNeeded();
+    return this.state.getCanvasProjection();
+  }
+
+  /** Executes a named command without synthesizing a terminal key event. */
+  public executeCommand(id: TermDrawCommandId): boolean {
+    this.loadPendingInitialDocumentIfNeeded();
+    return this.runCommand(id, "programmatic");
+  }
+
   /** Resizes the retained canvas whenever the outer renderable changes size. */
   protected override onResize(width: number, height: number): void {
     super.onResize(width, height);
@@ -239,6 +283,7 @@ export class TermDrawRenderable extends FrameBufferRenderable {
       state: this.state,
       chromeMode: this.chromeMode,
       layout,
+      executeCommand: (id) => this.runCommand(id, "mouse"),
       requestRender: () => this.requestRender(),
       dismissStartupLogo: () => this.dismissStartupLogo(),
     });
@@ -248,6 +293,8 @@ export class TermDrawRenderable extends FrameBufferRenderable {
   protected override renderSelf(buffer: OptimizedBuffer): void {
     const layout = this.syncCanvasLayout();
     this.loadPendingInitialDocumentIfNeeded();
+    const editor = this.state.getEditorSnapshot();
+    const viewport = this.state.getViewportSnapshot();
     this.frameBuffer.clear(COLORS.panel);
 
     if (this.chromeMode === "full") {
@@ -258,23 +305,21 @@ export class TermDrawRenderable extends FrameBufferRenderable {
       }
 
       const fullLayout = layout!;
-      const toolButtons = getToolButtons(fullLayout, this.state.currentMode);
-      const styleButtons = getContextualStyleButtons(fullLayout, this.state.currentMode);
+      const toolButtons = getToolButtons(fullLayout, editor.mode);
+      const styleButtons = getContextualStyleButtons(fullLayout, editor.mode);
       const colorSwatches = getColorSwatches(fullLayout, INK_COLORS);
+      const footerText =
+        this.footerTextOverride ??
+        buildTermDrawFooterText(
+          this.onSaveDiagramCallback !== null,
+          this.onCopyCallback !== null,
+          this.cancelOnCtrlCEnabled,
+        );
 
-      drawChrome(
-        this.frameBuffer,
-        this.width,
-        this.height,
-        this.state,
-        fullLayout,
-        this.footerTextOverride,
-        this.onSaveDiagramCallback !== null,
-        this.onCopyCallback !== null,
-      );
+      drawChrome(this.frameBuffer, this.width, this.height, editor, fullLayout, footerText);
       drawToolPalette(
         this.frameBuffer,
-        this.state,
+        editor,
         fullLayout,
         toolButtons,
         styleButtons,
@@ -282,10 +327,10 @@ export class TermDrawRenderable extends FrameBufferRenderable {
       );
     }
 
-    drawCanvas(this.frameBuffer, this.state);
+    drawCanvas(this.frameBuffer, this.state.getCanvasProjection());
     renderStartupLogo(
       this.frameBuffer,
-      this.state,
+      viewport,
       this.chromeMode,
       layout,
       this.startupLogoEnabled,
@@ -314,9 +359,30 @@ export class TermDrawRenderable extends FrameBufferRenderable {
       onCopy: this.onCopyCallback ? () => this.handleCopy() : null,
       onSaveDiagram: this.onSaveDiagramCallback ? () => this.beginDiagramSave() : null,
       onCancel: this.onCancelCallback,
+      onCommand: (event) => this.onCommandCallback?.(event),
       requestRender: () => this.requestRender(),
       dismissStartupLogo: () => this.dismissStartupLogo(),
     });
+  }
+
+  /** Runs a command against the current editor and host callbacks. */
+  private runCommand(id: TermDrawCommandId, source: TermDrawCommandSource): boolean {
+    this.dismissStartupLogo();
+    return executeTermDrawCommand(id, this.getCommandContext(), source);
+  }
+
+  /** Builds the current command execution boundary without exposing DrawState to hosts. */
+  private getCommandContext(): TermDrawCommandContext {
+    return {
+      state: this.state,
+      cancelOnCtrlCEnabled: this.cancelOnCtrlCEnabled,
+      onSave: this.onSaveCallback ? () => this.onSaveCallback?.(this.state.exportArt()) : null,
+      onCopy: this.onCopyCallback ? () => this.handleCopy() : null,
+      onSaveDiagram: this.onSaveDiagramCallback ? () => this.beginDiagramSave() : null,
+      onCancel: this.onCancelCallback,
+      requestRender: () => this.requestRender(),
+      onCommand: (event) => this.onCommandCallback?.(event),
+    };
   }
 
   /**
@@ -482,12 +548,13 @@ export function formatSavedOutput(art: string, fenced: boolean): string {
 
 /** Builds the CLI help text shown by the standalone termDRAW app. */
 export function buildHelpText(binaryName = "termdraw"): string {
+  const key = getTermDrawCommandKeyLabel;
   return truncateToCells(
     `${binaryName} [--load file.td.json|-] [--output file] [--fenced|--plain]\n\n` +
       `Controls:\n` +
       `  right palette   click Select / Box / Line / Elbow / Brush / Text, box styles, and colors\n` +
-      `  Ctrl+T / Tab    cycle select / box / line / elbow / brush / text\n` +
-      `  B / A / U / P / E / T switch to Brush / Select / Box / Line / Elbow / Text outside text entry\n` +
+      `  ${key("termdraw.tool.next")}    cycle select / box / line / elbow / brush / text\n` +
+      `  ${["termdraw.tool.paint", "termdraw.tool.select", "termdraw.tool.box", "termdraw.tool.line", "termdraw.tool.elbow", "termdraw.tool.text"].map((id) => key(id as TermDrawCommandId)).join(" / ")} switch to Brush / Select / Box / Line / Elbow / Text outside text entry\n` +
       `  select tool     click to select, drag empty space to marquee-select multiple objects\n` +
       `  click objects   select and move them\n` +
       `  drag handles    resize boxes / adjust line endpoints\n` +
@@ -496,18 +563,18 @@ export function buildHelpText(binaryName = "termdraw"): string {
       `  text tool       choose No border, Single, Double, or Dashed textbox borders\n` +
       `  Shift + drag    constrain Line mode to an axis; route Elbow mode vertical-first for horizontal arrows\n` +
       `  selected text   shows a virtual selection box\n` +
-      `  Delete          remove selected object\n` +
-      `  Esc             deselect\n` +
-      `  Ctrl+Q          quit\n` +
-      `  Ctrl+Z / Ctrl+Y undo / redo\n` +
-      `  Ctrl+X          clear canvas\n` +
-      `  [ / ]           cycle box style in Box mode, line style in Line/Elbow mode, text border in Text mode, or brush in Brush mode\n` +
+      `  ${key("termdraw.edit.delete")}          remove selected object\n` +
+      `  ${key("termdraw.selection.clear")}             deselect\n` +
+      `  ${key("termdraw.app.cancel")}          quit\n` +
+      `  ${key("termdraw.history.undo")} / ${getTermDrawCommandKeyLabel("termdraw.history.redo").split(" / ")[0]} undo / redo\n` +
+      `  ${key("termdraw.canvas.clear")}          clear canvas\n` +
+      `  ${key("termdraw.style.previous")} / ${key("termdraw.style.next")}           cycle box style in Box mode, line style in Line/Elbow mode, text border in Text mode, or brush in Brush mode\n` +
       `  mouse wheel     cycle box style in Box mode, line style in Line/Elbow mode, or brush in Brush mode\n` +
       `  brush tool      choose from preset brush stencils in the palette\n` +
-      `  Space           stamp a line point or current brush / insert space in Text mode\n` +
-      `  Enter           finish active text entry; otherwise export art\n` +
-      `  Ctrl+S          export art, including during text entry\n` +
-      `  Ctrl+D          save diagram (.td.json), prompting for a path when needed\n\n` +
+      `  ${key("termdraw.edit.space")}           stamp a line point or current brush / insert space in Text mode\n` +
+      `  ${key("termdraw.art.accept")}           finish active text entry; otherwise export art\n` +
+      `  ${key("termdraw.art.export")}          export art, including during text entry\n` +
+      `  ${key("termdraw.document.save")}          save diagram (.td.json), prompting for a path when needed\n\n` +
       `Options:\n` +
       `  --load <file>       open a native termDRAW document from a file\n` +
       `  --load -            read a native termDRAW document from stdin\n` +

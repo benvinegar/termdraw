@@ -8,6 +8,7 @@ All notable user-visible changes to this project are documented in this file.
 
 - `--clipboard` (`-c`) in `@termdraw/app`: Enter copies the rendered drawing to the system clipboard via OSC 52 and leaves the editor open, while Ctrl+S keeps exporting and exiting. Without the flag Enter behaves exactly as before.
 - `onCopy` option on `TermDrawApp`/`TermDrawRenderable` in `@termdraw/opentui`, letting a host decide how a copy request is fulfilled.
+- Added a typed, namespaced command catalog to `@termdraw/opentui`, plus programmatic command execution, command observation, and immutable editor/canvas projections for alternate hosts and renderers.
 
 ### Changed
 
@@ -16,6 +17,7 @@ All notable user-visible changes to this project are documented in this file.
 ### Fixed
 
 - Prevented Enter and Shift+Enter from unexpectedly exporting and closing termDRAW during active text entry; they now finish text entry while Ctrl+S remains the explicit export shortcut.
+- Prevented terminal resizing and undo/redo from translating persisted diagram objects to fit the current viewport.
 - Made the Pi smoke test hermetic by passing `--no-extensions`, so conflicting globally installed Pi extensions no longer fail the run.
 
 ## [0.4.1]

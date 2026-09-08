@@ -27,7 +27,11 @@ import type {
   DiagramSavePromptKeyResult,
   DiagramSavePromptState,
 } from "./types.js";
-import { TOOL_HOTKEYS } from "./theme.js";
+import {
+  dispatchTermDrawCommand,
+  type TermDrawCommandEvent,
+  type TermDrawCommandId,
+} from "./commands.js";
 
 /** Describes the callbacks needed by the extracted input handlers. */
 type InputCallbacks = {
@@ -38,6 +42,23 @@ type InputCallbacks = {
 /** Returns whether a key inserts exactly one printable terminal cell. */
 function isPrintableKey(key: KeyEvent): boolean {
   if (key.ctrl || key.meta || key.option) return false;
+  if (
+    [
+      "backspace",
+      "delete",
+      "enter",
+      "return",
+      "escape",
+      "esc",
+      "tab",
+      "up",
+      "down",
+      "left",
+      "right",
+    ].includes(key.name.toLowerCase())
+  ) {
+    return false;
+  }
   if (!key.raw || key.raw.startsWith("\u001b")) return false;
   if (key.name === "space") return false;
   return visibleCellCount(key.raw) === 1;
@@ -78,9 +99,20 @@ export function handleMouseEvent(
     state: DrawState;
     chromeMode: ChromeMode;
     layout: AppLayout | null;
+    executeCommand: (id: TermDrawCommandId) => boolean;
   } & InputCallbacks,
 ): void {
-  const { event, x, y, state, chromeMode, layout, requestRender, dismissStartupLogo } = options;
+  const {
+    event,
+    x,
+    y,
+    state,
+    chromeMode,
+    layout,
+    executeCommand,
+    requestRender,
+    dismissStartupLogo,
+  } = options;
 
   if (event.type !== "move" && event.type !== "over" && event.type !== "out") {
     dismissStartupLogo();
@@ -93,8 +125,7 @@ export function handleMouseEvent(
 
     if (toolButton) {
       if (event.type === "down" && event.button === MouseButton.LEFT) {
-        state.setMode(toolButton.mode);
-        requestRender();
+        executeCommand(toolButton.commandId);
       }
       event.preventDefault();
       event.stopPropagation();
@@ -162,6 +193,7 @@ export function handleKeyPress(
     onCopy?: (() => void) | null;
     onSaveDiagram: (() => void) | null;
     onCancel: (() => void) | null;
+    onCommand?: (event: TermDrawCommandEvent) => void;
   } & InputCallbacks,
 ): boolean {
   const {
@@ -175,279 +207,42 @@ export function handleKeyPress(
     requestRender,
     dismissStartupLogo,
   } = options;
-  const name = key.name.toLowerCase();
-
   dismissStartupLogo();
-
-  if ((cancelOnCtrlCEnabled && key.ctrl && name === "c") || (key.ctrl && name === "q")) {
+  // Focused text entry owns printable keys before the global command table. Brackets retain their
+  // existing role as text-border controls.
+  if (
+    state.currentMode === "text" &&
+    state.isTextEntryArmed &&
+    key.raw !== "[" &&
+    key.raw !== "]" &&
+    isPrintableKey(key)
+  ) {
     key.preventDefault();
-    onCancel?.();
-    return true;
-  }
-
-  if (name === "escape" || name === "esc") {
-    key.preventDefault();
-    state.clearSelection();
-    requestRender();
-    return true;
-  }
-
-  const isEnter = name === "enter" || name === "return";
-  const isModifiedEnter = key.ctrl || key.meta || key.option || key.super || key.hyper;
-
-  // Enter finishes active text entry instead of unexpectedly exporting and closing the editor.
-  // Shift+Enter follows the same safe behavior until multiline text is supported.
-  if (isEnter && !isModifiedEnter && state.currentMode === "text" && state.isTextEntryArmed) {
-    key.preventDefault();
-    state.clearSelection();
-    requestRender();
-    return true;
-  }
-
-  // Enter copies when a copy handler is wired, so Ctrl+S remains the way to export and finish.
-  // With no handler the two keys stay merged, which is the historical behavior.
-  if (isEnter && onCopy) {
-    key.preventDefault();
-    onCopy();
-    return true;
-  }
-
-  if (isEnter || (key.ctrl && name === "s")) {
-    key.preventDefault();
-    onSave?.();
-    return true;
-  }
-
-  if (key.ctrl && name === "d") {
-    if (!onSaveDiagram) return false;
-    key.preventDefault();
-    onSaveDiagram();
-    return true;
-  }
-
-  if (name === "tab" || (key.ctrl && name === "t")) {
-    key.preventDefault();
-    state.cycleMode();
-    requestRender();
-    return true;
-  }
-
-  const toolHotkeyMode =
-    (state.currentMode === "text" && state.isTextEntryArmed) || key.ctrl || key.meta || key.option
-      ? null
-      : (TOOL_HOTKEYS[name] ?? null);
-  if (toolHotkeyMode) {
-    key.preventDefault();
-    state.setMode(toolHotkeyMode);
-    requestRender();
-    return true;
-  }
-
-  if (key.ctrl && !key.shift && name === "z") {
-    key.preventDefault();
-    state.undo();
-    requestRender();
-    return true;
-  }
-
-  if ((key.ctrl && name === "y") || (key.ctrl && key.shift && name === "z")) {
-    key.preventDefault();
-    state.redo();
-    requestRender();
-    return true;
-  }
-
-  if (key.ctrl && name === "x") {
-    key.preventDefault();
-    state.clearCanvas();
+    state.insertCharacter(key.raw);
     requestRender();
     return true;
   }
 
   if (
-    !state.isEditingText &&
-    state.hasSelectedObject &&
-    (name === "backspace" || name === "delete")
+    dispatchTermDrawCommand(key, {
+      state,
+      cancelOnCtrlCEnabled,
+      onSave,
+      onCopy: onCopy ?? null,
+      onSaveDiagram,
+      onCancel,
+      requestRender,
+      onCommand: options.onCommand,
+    })
   ) {
-    key.preventDefault();
-    state.deleteSelectedObject();
-    requestRender();
     return true;
   }
 
-  if (name === "up") {
+  if (state.currentMode === "text" && isPrintableKey(key)) {
     key.preventDefault();
-    if (state.hasSelectedObject && !state.isEditingText) {
-      state.moveSelectedObjectBy(0, -1);
-    } else {
-      state.moveCursor(0, -1);
-    }
+    state.insertCharacter(key.raw);
     requestRender();
     return true;
-  }
-
-  if (name === "down") {
-    key.preventDefault();
-    if (state.hasSelectedObject && !state.isEditingText) {
-      state.moveSelectedObjectBy(0, 1);
-    } else {
-      state.moveCursor(0, 1);
-    }
-    requestRender();
-    return true;
-  }
-
-  if (name === "left") {
-    key.preventDefault();
-    if (state.hasSelectedObject && !state.isEditingText) {
-      state.moveSelectedObjectBy(-1, 0);
-    } else {
-      state.moveCursor(-1, 0);
-    }
-    requestRender();
-    return true;
-  }
-
-  if (name === "right") {
-    key.preventDefault();
-    if (state.hasSelectedObject && !state.isEditingText) {
-      state.moveSelectedObjectBy(1, 0);
-    } else {
-      state.moveCursor(1, 0);
-    }
-    requestRender();
-    return true;
-  }
-
-  if (state.currentMode === "box") {
-    if (key.raw === "[") {
-      key.preventDefault();
-      state.cycleBoxStyle(-1);
-      requestRender();
-      return true;
-    }
-
-    if (key.raw === "]") {
-      key.preventDefault();
-      state.cycleBoxStyle(1);
-      requestRender();
-      return true;
-    }
-  }
-
-  if (state.currentMode === "line" || state.currentMode === "elbow") {
-    if (key.raw === "[") {
-      key.preventDefault();
-      state.cycleLineStyle(-1);
-      requestRender();
-      return true;
-    }
-
-    if (key.raw === "]") {
-      key.preventDefault();
-      state.cycleLineStyle(1);
-      requestRender();
-      return true;
-    }
-
-    if (state.currentMode === "elbow" && name === "r") {
-      key.preventDefault();
-      state.toggleElbowOrientation();
-      requestRender();
-      return true;
-    }
-
-    if (name === "space") {
-      key.preventDefault();
-      state.stampBrushAtCursor();
-      requestRender();
-      return true;
-    }
-
-    if (name === "backspace" || name === "delete") {
-      key.preventDefault();
-      state.eraseAtCursor();
-      requestRender();
-      return true;
-    }
-
-    return false;
-  }
-
-  if (state.currentMode === "paint") {
-    if (key.raw === "[") {
-      key.preventDefault();
-      state.cycleBrush(-1);
-      requestRender();
-      return true;
-    }
-
-    if (key.raw === "]") {
-      key.preventDefault();
-      state.cycleBrush(1);
-      requestRender();
-      return true;
-    }
-
-    if (name === "space") {
-      key.preventDefault();
-      state.stampBrushAtCursor();
-      requestRender();
-      return true;
-    }
-
-    if (name === "backspace" || name === "delete") {
-      key.preventDefault();
-      state.eraseAtCursor();
-      requestRender();
-      return true;
-    }
-
-    return false;
-  }
-
-  if (state.currentMode === "text") {
-    if (key.raw === "[") {
-      key.preventDefault();
-      state.cycleTextBorderMode(-1);
-      requestRender();
-      return true;
-    }
-
-    if (key.raw === "]") {
-      key.preventDefault();
-      state.cycleTextBorderMode(1);
-      requestRender();
-      return true;
-    }
-
-    if (name === "backspace") {
-      key.preventDefault();
-      state.backspace();
-      requestRender();
-      return true;
-    }
-
-    if (name === "delete") {
-      key.preventDefault();
-      state.deleteAtCursor();
-      requestRender();
-      return true;
-    }
-
-    if (name === "space") {
-      key.preventDefault();
-      state.insertCharacter(" ");
-      requestRender();
-      return true;
-    }
-
-    if (isPrintableKey(key)) {
-      key.preventDefault();
-      state.insertCharacter(key.raw);
-      requestRender();
-      return true;
-    }
   }
 
   return false;

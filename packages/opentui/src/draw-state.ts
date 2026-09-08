@@ -75,6 +75,9 @@ import {
   type ConnectionStyle,
   type DragState,
   type DrawDocument,
+  type DrawCanvasCellProjection,
+  type DrawCanvasProjection,
+  type DrawEditorSnapshot,
   type DrawMode,
   type DrawObject,
   type ElbowObject,
@@ -95,6 +98,8 @@ import {
   type Point,
   type Rect,
   type Snapshot,
+  type DrawStateSnapshot,
+  type DrawViewportSnapshot,
   type TextBorderMode,
   type TextObject,
 } from "./draw-state/types.js";
@@ -113,9 +118,17 @@ export {
 export type {
   BoxStyle,
   CanvasInsets,
+  DrawCanvasCellKind,
+  DrawCanvasCellProjection,
+  DrawCanvasProjection,
+  DrawDocumentSnapshot,
   DrawDocument,
   DrawMode,
   DrawObject,
+  DrawEditorSnapshot,
+  DrawStateSnapshot,
+  DrawViewportSnapshot,
+  ElbowOrientation,
   InkColor,
   LineStyle,
   PointerEventLike,
@@ -497,13 +510,13 @@ export class DrawState {
     this.cursorX = Math.max(0, Math.min(this.cursorX, this.canvasWidth - 1));
     this.cursorY = Math.max(0, Math.min(this.cursorY, this.canvasHeight - 1));
 
-    this.setObjects(this.objects.map((object) => this.shiftObjectInsideCanvas(object)));
     this.pendingSelection = null;
     this.pendingLine = null;
     this.pendingBox = null;
     this.pendingPaint = null;
     this.dragState = null;
     this.eraseState = null;
+    this.markSceneDirty();
   }
 
   /** Routes pointer input into the active tool, drag interaction, or erase session. */
@@ -1244,6 +1257,103 @@ export class DrawState {
     };
   }
 
+  /** Returns an immutable-by-contract projection without transient interactions or render caches. */
+  public getSnapshot(): DrawStateSnapshot {
+    return {
+      document: this.exportDocument(),
+      editor: this.getEditorSnapshot(),
+      viewport: this.getViewportSnapshot(),
+    };
+  }
+
+  /** Returns the lightweight editor projection used by renderers and hosts. */
+  public getEditorSnapshot(): DrawEditorSnapshot {
+    return {
+      mode: this.mode,
+      modeLabel: this.getModeLabel(),
+      brush: this.brush,
+      boxStyle: this.boxStyle,
+      lineStyle: this.currentLineStyle,
+      elbowOrientation: this.elbowOrientation,
+      textBorderMode: this.textBorderMode,
+      inkColor: this.inkColor,
+      status: this.status,
+      cursor: { x: this.cursorX, y: this.cursorY },
+      selectedObjectIds: [...this.selectedObjectIds],
+      primarySelectedObjectId: this.selectedObjectId,
+      activeTextObjectId: this.activeTextObjectId,
+      textEntryArmed: this.textEntryArmed,
+      isEditingText: this.isEditingText,
+      canUndo: this.undoStack.length > 0,
+      canRedo: this.redoStack.length > 0,
+    };
+  }
+
+  /** Returns the current canvas viewport without exposing mutable layout state. */
+  public getViewportSnapshot(): DrawViewportSnapshot {
+    return {
+      width: this.canvasWidth,
+      height: this.canvasHeight,
+      left: this.canvasInsets.left,
+      top: this.canvasInsets.top,
+    };
+  }
+
+  /** Projects the current scene and interaction overlays into renderer-neutral canvas cells. */
+  public getCanvasProjection(): DrawCanvasProjection {
+    this.ensureScene();
+    const preview = this.getActivePreviewCharacters();
+    const marqueeChars = this.getSelectionMarqueeCharacters();
+    const selectedCells = this.getSelectedCellKeys();
+    const handleChars = this.getSelectionHandleCharacters();
+    const cells = new Map<string, DrawCanvasCellProjection>();
+
+    for (let y = 0; y < this.canvasHeight; y += 1) {
+      for (let x = 0; x < this.canvasWidth; x += 1) {
+        const character = this.getCompositeCell(x, y);
+        if (character === " ") continue;
+        const key = `${x},${y}`;
+        cells.set(key, {
+          character,
+          inkColor: this.getCompositeColor(x, y),
+          kind: "content",
+        });
+      }
+    }
+
+    for (const [key, character] of preview) {
+      cells.set(key, { character, inkColor: this.inkColor, kind: "preview" });
+    }
+    for (const key of selectedCells) {
+      const point = pointFromKey(key);
+      const cell = cells.get(key) ?? {
+        character: this.getCompositeCell(point.x, point.y),
+        inkColor: this.getCompositeColor(point.x, point.y),
+        kind: "content" as const,
+      };
+      cells.set(key, { ...cell, kind: "selection" });
+    }
+    for (const [key, character] of marqueeChars) {
+      cells.set(key, { character, inkColor: null, kind: "marquee" });
+    }
+    for (const [key, character] of handleChars) {
+      cells.set(key, { character, inkColor: null, kind: "handle" });
+    }
+
+    const cursorKey = `${this.cursorX},${this.cursorY}`;
+    const cursorCell = cells.get(cursorKey);
+    cells.set(cursorKey, {
+      character: cursorCell?.character ?? " ",
+      inkColor: cursorCell?.inkColor ?? null,
+      kind: "cursor",
+    });
+
+    return {
+      viewport: this.getViewportSnapshot(),
+      cells,
+    };
+  }
+
   /** Replaces the current editable scene from a validated termDRAW document. */
   public loadDocument(document: DrawDocument): void {
     const validatedDocument = validateDrawDocument(document);
@@ -1765,9 +1875,7 @@ export class DrawState {
 
   /** Restores editor state from an undo or redo snapshot. */
   private restoreSnapshot(snapshot: Snapshot): void {
-    this.objects = this.recomputeParentAssignments(
-      cloneObjects(snapshot.objects).map((object) => this.shiftObjectInsideCanvas(object)),
-    );
+    this.objects = this.recomputeParentAssignments(cloneObjects(snapshot.objects));
     this.selectedObjectIds = [...snapshot.selectedObjectIds];
     this.selectedObjectId = snapshot.selectedObjectId;
     this.activeTextObjectId = snapshot.activeTextObjectId;
@@ -2577,27 +2685,6 @@ export class DrawState {
     }
 
     return point;
-  }
-
-  /** Shifts an object just enough to bring it fully back inside the canvas. */
-  private shiftObjectInsideCanvas(object: DrawObject): DrawObject {
-    const bounds = getObjectBounds(object);
-    let dx = 0;
-    let dy = 0;
-
-    if (bounds.left < 0) {
-      dx = -bounds.left;
-    } else if (bounds.right >= this.canvasWidth) {
-      dx = this.canvasWidth - 1 - bounds.right;
-    }
-
-    if (bounds.top < 0) {
-      dy = -bounds.top;
-    } else if (bounds.bottom >= this.canvasHeight) {
-      dy = this.canvasHeight - 1 - bounds.bottom;
-    }
-
-    return translateObject(object, dx, dy);
   }
 
   private bringObjectToFront<T extends DrawObject>(object: T): T {
