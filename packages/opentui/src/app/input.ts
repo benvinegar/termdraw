@@ -13,6 +13,7 @@ import type {
   TextBorderMode,
 } from "../draw-state.js";
 import { splitGraphemes, visibleCellCount } from "../text.js";
+import { dispatchDrawIntent } from "../draw-state/intent.js";
 import {
   getColorSwatches,
   getContextualStyleButtons,
@@ -225,7 +226,7 @@ export function handleKeyPress(
 
   if (
     dispatchTermDrawCommand(key, {
-      state,
+      dispatchDrawIntent: (intent) => dispatchDrawIntent(state, intent),
       cancelOnCtrlCEnabled,
       onSave,
       onCopy: onCopy ?? null,
