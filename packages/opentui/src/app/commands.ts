@@ -1,5 +1,5 @@
 import type { KeyEvent } from "@opentui/core";
-import type { DrawState } from "../draw-state.js";
+import type { DrawIntent, DrawIntentDispatch } from "../draw-state/intent.js";
 
 /** Identifies whether a command changes the document, editor state, or host environment. */
 export type TermDrawCommandLocus = "document" | "editor-local" | "host-only";
@@ -105,7 +105,7 @@ export type TermDrawCommandSource = "keyboard" | "mouse" | "programmatic";
 export type TermDrawCommandEvent = { id: TermDrawCommandId; source: TermDrawCommandSource };
 
 export type TermDrawCommandContext = {
-  state: DrawState;
+  dispatchDrawIntent: DrawIntentDispatch;
   cancelOnCtrlCEnabled: boolean;
   onSave: (() => void) | null;
   onCopy: (() => void) | null;
@@ -117,33 +117,10 @@ export type TermDrawCommandContext = {
 
 type CommandHandler = (context: TermDrawCommandContext) => boolean;
 
-function renderAfter(context: TermDrawCommandContext, action: () => void): boolean {
-  action();
+function dispatchAndRender(context: TermDrawCommandContext, intent: DrawIntent): boolean {
+  if (!context.dispatchDrawIntent(intent)) return false;
   context.requestRender();
   return true;
-}
-
-function move(context: TermDrawCommandContext, dx: number, dy: number): boolean {
-  return renderAfter(context, () => {
-    if (context.state.hasSelectedObject && !context.state.isEditingText) {
-      context.state.moveSelectedObjectBy(dx, dy);
-    } else {
-      context.state.moveCursor(dx, dy);
-    }
-  });
-}
-
-function cycleStyle(context: TermDrawCommandContext, delta: -1 | 1): boolean {
-  const { state } = context;
-  if (state.currentMode === "box") return renderAfter(context, () => state.cycleBoxStyle(delta));
-  if (state.currentMode === "line" || state.currentMode === "elbow") {
-    return renderAfter(context, () => state.cycleLineStyle(delta));
-  }
-  if (state.currentMode === "paint") return renderAfter(context, () => state.cycleBrush(delta));
-  if (state.currentMode === "text") {
-    return renderAfter(context, () => state.cycleTextBorderMode(delta));
-  }
-  return false;
 }
 
 const COMMAND_HANDLERS: Record<TermDrawCommandId, CommandHandler> = {
@@ -151,10 +128,7 @@ const COMMAND_HANDLERS: Record<TermDrawCommandId, CommandHandler> = {
     context.onCancel?.();
     return true;
   },
-  "termdraw.text.finish": (context) => {
-    if (context.state.currentMode !== "text" || !context.state.isTextEntryArmed) return false;
-    return renderAfter(context, () => context.state.clearSelection());
-  },
+  "termdraw.text.finish": (context) => dispatchAndRender(context, { type: "finish-text-entry" }),
   "termdraw.art.accept": (context) => {
     (context.onCopy ?? context.onSave)?.();
     return true;
@@ -168,73 +142,34 @@ const COMMAND_HANDLERS: Record<TermDrawCommandId, CommandHandler> = {
     context.onSaveDiagram();
     return true;
   },
-  "termdraw.selection.clear": (context) =>
-    renderAfter(context, () => context.state.clearSelection()),
-  "termdraw.tool.next": (context) => renderAfter(context, () => context.state.cycleMode()),
-  "termdraw.tool.select": (context) => renderAfter(context, () => context.state.setMode("select")),
-  "termdraw.tool.box": (context) => renderAfter(context, () => context.state.setMode("box")),
-  "termdraw.tool.line": (context) => renderAfter(context, () => context.state.setMode("line")),
-  "termdraw.tool.elbow": (context) => renderAfter(context, () => context.state.setMode("elbow")),
-  "termdraw.tool.paint": (context) => renderAfter(context, () => context.state.setMode("paint")),
-  "termdraw.tool.text": (context) => renderAfter(context, () => context.state.setMode("text")),
-  "termdraw.history.undo": (context) => renderAfter(context, () => context.state.undo()),
-  "termdraw.history.redo": (context) => renderAfter(context, () => context.state.redo()),
-  "termdraw.canvas.clear": (context) => renderAfter(context, () => context.state.clearCanvas()),
-  "termdraw.cursor.up": (context) => move(context, 0, -1),
-  "termdraw.cursor.down": (context) => move(context, 0, 1),
-  "termdraw.cursor.left": (context) => move(context, -1, 0),
-  "termdraw.cursor.right": (context) => move(context, 1, 0),
-  "termdraw.style.previous": (context) => cycleStyle(context, -1),
-  "termdraw.style.next": (context) => cycleStyle(context, 1),
-  "termdraw.elbow.toggle-orientation": (context) => {
-    if (context.state.currentMode !== "elbow") return false;
-    return renderAfter(context, () => context.state.toggleElbowOrientation());
-  },
-  "termdraw.edit.space": (context) => {
-    if (context.state.currentMode === "text") {
-      return renderAfter(context, () => context.state.insertCharacter(" "));
-    }
-    if (
-      context.state.currentMode === "line" ||
-      context.state.currentMode === "elbow" ||
-      context.state.currentMode === "paint"
-    ) {
-      return renderAfter(context, () => context.state.stampBrushAtCursor());
-    }
-    return false;
-  },
-  "termdraw.edit.backspace": (context) => {
-    if (!context.state.isEditingText && context.state.hasSelectedObject) {
-      return renderAfter(context, () => context.state.deleteSelectedObject());
-    }
-    if (context.state.currentMode === "text") {
-      return renderAfter(context, () => context.state.backspace());
-    }
-    if (
-      context.state.currentMode === "line" ||
-      context.state.currentMode === "elbow" ||
-      context.state.currentMode === "paint"
-    ) {
-      return renderAfter(context, () => context.state.eraseAtCursor());
-    }
-    return false;
-  },
-  "termdraw.edit.delete": (context) => {
-    if (!context.state.isEditingText && context.state.hasSelectedObject) {
-      return renderAfter(context, () => context.state.deleteSelectedObject());
-    }
-    if (context.state.currentMode === "text") {
-      return renderAfter(context, () => context.state.deleteAtCursor());
-    }
-    if (
-      context.state.currentMode === "line" ||
-      context.state.currentMode === "elbow" ||
-      context.state.currentMode === "paint"
-    ) {
-      return renderAfter(context, () => context.state.eraseAtCursor());
-    }
-    return false;
-  },
+  "termdraw.selection.clear": (context) => dispatchAndRender(context, { type: "clear-selection" }),
+  "termdraw.tool.next": (context) => dispatchAndRender(context, { type: "cycle-mode" }),
+  "termdraw.tool.select": (context) =>
+    dispatchAndRender(context, { type: "set-mode", mode: "select" }),
+  "termdraw.tool.box": (context) => dispatchAndRender(context, { type: "set-mode", mode: "box" }),
+  "termdraw.tool.line": (context) => dispatchAndRender(context, { type: "set-mode", mode: "line" }),
+  "termdraw.tool.elbow": (context) =>
+    dispatchAndRender(context, { type: "set-mode", mode: "elbow" }),
+  "termdraw.tool.paint": (context) =>
+    dispatchAndRender(context, { type: "set-mode", mode: "paint" }),
+  "termdraw.tool.text": (context) => dispatchAndRender(context, { type: "set-mode", mode: "text" }),
+  "termdraw.history.undo": (context) => dispatchAndRender(context, { type: "undo" }),
+  "termdraw.history.redo": (context) => dispatchAndRender(context, { type: "redo" }),
+  "termdraw.canvas.clear": (context) => dispatchAndRender(context, { type: "clear-canvas" }),
+  "termdraw.cursor.up": (context) => dispatchAndRender(context, { type: "move", dx: 0, dy: -1 }),
+  "termdraw.cursor.down": (context) => dispatchAndRender(context, { type: "move", dx: 0, dy: 1 }),
+  "termdraw.cursor.left": (context) => dispatchAndRender(context, { type: "move", dx: -1, dy: 0 }),
+  "termdraw.cursor.right": (context) => dispatchAndRender(context, { type: "move", dx: 1, dy: 0 }),
+  "termdraw.style.previous": (context) =>
+    dispatchAndRender(context, { type: "cycle-style", direction: -1 }),
+  "termdraw.style.next": (context) =>
+    dispatchAndRender(context, { type: "cycle-style", direction: 1 }),
+  "termdraw.elbow.toggle-orientation": (context) =>
+    dispatchAndRender(context, { type: "toggle-elbow-orientation" }),
+  "termdraw.edit.space": (context) => dispatchAndRender(context, { type: "insert-or-stamp" }),
+  "termdraw.edit.backspace": (context) =>
+    dispatchAndRender(context, { type: "backspace-or-erase" }),
+  "termdraw.edit.delete": (context) => dispatchAndRender(context, { type: "delete-or-erase" }),
 };
 
 const CATALOG_BY_ID = new Map(TERM_DRAW_COMMAND_CATALOG.map((entry) => [entry.id, entry] as const));

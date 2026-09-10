@@ -219,6 +219,16 @@ export type EraseState = {
   pushedUndo: boolean;
 };
 
+/** Pointer-session state that is never persisted, included in history, or exposed to hosts. */
+export type TransientInteractionState = {
+  pendingSelection: PendingSelection | null;
+  pendingLine: PendingLine | null;
+  pendingBox: PendingBox | null;
+  pendingPaint: PendingPaint | null;
+  dragState: DragState | null;
+  eraseState: EraseState | null;
+};
+
 export type HandleHit =
   | {
       kind: "box-corner";

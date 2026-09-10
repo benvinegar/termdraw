@@ -37,16 +37,14 @@ import {
   objectContainsPoint,
   translateObject,
 } from "./draw-state/object-utils.js";
+import { getBoxBorderGlyphs } from "./draw-state/scene.js";
 import {
-  adjustConnection,
-  applyBoxPerimeter,
-  createCanvas,
-  createColorGrid,
-  createConnectionGrid,
-  getBoxBorderGlyphs,
-  getConnectionGlyph as getConnectionGlyphForGrid,
-  paintConnectionColor,
-} from "./draw-state/scene.js";
+  getDrawSceneCell,
+  projectDrawCanvas,
+  projectDrawScene,
+  resolveBoxConnectionStyle,
+  type DrawSceneProjection,
+} from "./draw-state/projection.js";
 import {
   getTextContentOrigin,
   getTextRenderRect,
@@ -72,17 +70,13 @@ import {
   type CanvasInsets,
   type ColorGrid,
   type ConnectionGrid,
-  type ConnectionStyle,
-  type DragState,
   type DrawDocument,
-  type DrawCanvasCellProjection,
   type DrawCanvasProjection,
   type DrawEditorSnapshot,
   type DrawMode,
   type DrawObject,
   type ElbowObject,
   type ElbowOrientation,
-  type EraseState,
   type HandleHit,
   type InkColor,
   type LineEndpointHandle,
@@ -90,10 +84,6 @@ import {
   type LineStyle,
   type ObjectHit,
   type PaintObject,
-  type PendingBox,
-  type PendingLine,
-  type PendingPaint,
-  type PendingSelection,
   type PointerEventLike,
   type Point,
   type Rect,
@@ -102,6 +92,7 @@ import {
   type DrawViewportSnapshot,
   type TextBorderMode,
   type TextObject,
+  type TransientInteractionState,
 } from "./draw-state/types.js";
 
 export {
@@ -139,6 +130,17 @@ const MAX_HISTORY = 100;
 const HANDLE_CHARACTER = "●";
 const LINE_MODE_STYLES = ["smooth", "light", "double"] as const satisfies readonly LineStyle[];
 const ELBOW_LINE_STYLES = ["light", "double", "dashed"] as const satisfies readonly LineStyle[];
+
+function createTransientInteractionState(): TransientInteractionState {
+  return {
+    pendingSelection: null,
+    pendingLine: null,
+    pendingBox: null,
+    pendingPaint: null,
+    dragState: null,
+    eraseState: null,
+  };
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -378,12 +380,7 @@ export class DrawState {
   private activeTextObjectId: string | null = null;
   private textEntryArmed = false;
 
-  private pendingSelection: PendingSelection | null = null;
-  private pendingLine: PendingLine | null = null;
-  private pendingBox: PendingBox | null = null;
-  private pendingPaint: PendingPaint | null = null;
-  private dragState: DragState | null = null;
-  private eraseState: EraseState | null = null;
+  private interaction = createTransientInteractionState();
 
   private nextObjectNumber = 1;
   private nextZIndex = 1;
@@ -474,12 +471,12 @@ export class DrawState {
 
   public get hasActivePointerInteraction(): boolean {
     return (
-      this.pendingSelection !== null ||
-      this.pendingLine !== null ||
-      this.pendingBox !== null ||
-      this.pendingPaint !== null ||
-      this.dragState !== null ||
-      this.eraseState !== null
+      this.interaction.pendingSelection !== null ||
+      this.interaction.pendingLine !== null ||
+      this.interaction.pendingBox !== null ||
+      this.interaction.pendingPaint !== null ||
+      this.interaction.dragState !== null ||
+      this.interaction.eraseState !== null
     );
   }
 
@@ -510,12 +507,7 @@ export class DrawState {
     this.cursorX = Math.max(0, Math.min(this.cursorX, this.canvasWidth - 1));
     this.cursorY = Math.max(0, Math.min(this.cursorY, this.canvasHeight - 1));
 
-    this.pendingSelection = null;
-    this.pendingLine = null;
-    this.pendingBox = null;
-    this.pendingPaint = null;
-    this.dragState = null;
-    this.eraseState = null;
+    this.resetTransientInteraction();
     this.markSceneDirty();
   }
 
@@ -552,55 +544,57 @@ export class DrawState {
       this.cursorX = clampedX;
       this.cursorY = clampedY;
 
-      if (this.dragState) {
+      if (this.interaction.dragState) {
         this.updateDraggedObject(point, event.shift === true);
         return;
       }
 
-      if (this.pendingSelection) {
-        this.pendingSelection.end = point;
+      if (this.interaction.pendingSelection) {
+        this.interaction.pendingSelection.end = point;
         this.setStatus(
-          `Selecting ${this.describeRect(normalizeRect(this.pendingSelection.start, this.pendingSelection.end))}.`,
+          `Selecting ${this.describeRect(normalizeRect(this.interaction.pendingSelection.start, this.interaction.pendingSelection.end))}.`,
         );
         return;
       }
 
-      if (this.pendingBox) {
-        this.pendingBox.end = point;
+      if (this.interaction.pendingBox) {
+        this.interaction.pendingBox.end = point;
         this.setStatus(
-          `Sizing box ${this.describeRect(normalizeRect(this.pendingBox.start, this.pendingBox.end))}.`,
+          `Sizing box ${this.describeRect(normalizeRect(this.interaction.pendingBox.start, this.interaction.pendingBox.end))}.`,
         );
         return;
       }
 
-      if (this.pendingLine) {
+      if (this.interaction.pendingLine) {
         const isElbow = this.mode === "elbow";
         const nextPoint =
           event.shift === true && !isElbow
-            ? constrainLinePoint(this.pendingLine.start, point)
+            ? constrainLinePoint(this.interaction.pendingLine.start, point)
             : point;
-        this.pendingLine.end = nextPoint;
-        this.pendingLine.orientation = this.getElbowOrientationFromModifier(event.shift === true);
+        this.interaction.pendingLine.end = nextPoint;
+        this.interaction.pendingLine.orientation = this.getElbowOrientationFromModifier(
+          event.shift === true,
+        );
         this.setStatus(
           isElbow
-            ? `Sizing elbow to ${nextPoint.x + 1},${nextPoint.y + 1} (${this.describeElbowOrientation(this.pendingLine.orientation)}).`
+            ? `Sizing elbow to ${nextPoint.x + 1},${nextPoint.y + 1} (${this.describeElbowOrientation(this.interaction.pendingLine.orientation)}).`
             : `Sizing line to ${nextPoint.x + 1},${nextPoint.y + 1}.`,
         );
         return;
       }
 
-      if (this.pendingPaint) {
-        this.pendingPaint.points = appendPaintSegment(
-          this.pendingPaint.points,
-          this.pendingPaint.lastPoint,
+      if (this.interaction.pendingPaint) {
+        this.interaction.pendingPaint.points = appendPaintSegment(
+          this.interaction.pendingPaint.points,
+          this.interaction.pendingPaint.lastPoint,
           point,
         );
-        this.pendingPaint.lastPoint = point;
+        this.interaction.pendingPaint.lastPoint = point;
         this.setStatus(`Brush stroke to ${point.x + 1},${point.y + 1}.`);
         return;
       }
 
-      if (insideCanvas && this.eraseState) {
+      if (insideCanvas && this.interaction.eraseState) {
         this.eraseObjectAt(point.x, point.y);
       }
       return;
@@ -635,7 +629,7 @@ export class DrawState {
     switch (this.mode) {
       case "select":
         this.activeTextObjectId = null;
-        this.pendingSelection = {
+        this.interaction.pendingSelection = {
           start: { x: canvasX, y: canvasY },
           end: { x: canvasX, y: canvasY },
         };
@@ -646,7 +640,7 @@ export class DrawState {
       case "box":
         this.setSelectedObjects([]);
         this.activeTextObjectId = null;
-        this.pendingBox = {
+        this.interaction.pendingBox = {
           start: { x: canvasX, y: canvasY },
           end: { x: canvasX, y: canvasY },
         };
@@ -658,7 +652,7 @@ export class DrawState {
       case "elbow":
         this.setSelectedObjects([]);
         this.activeTextObjectId = null;
-        this.pendingLine = {
+        this.interaction.pendingLine = {
           start: { x: canvasX, y: canvasY },
           end: { x: canvasX, y: canvasY },
           orientation: this.elbowOrientation,
@@ -672,7 +666,7 @@ export class DrawState {
       case "paint":
         this.setSelectedObjects([]);
         this.activeTextObjectId = null;
-        this.pendingPaint = {
+        this.interaction.pendingPaint = {
           points: [{ x: canvasX, y: canvasY }],
           lastPoint: { x: canvasX, y: canvasY },
         };
@@ -702,16 +696,26 @@ export class DrawState {
     }
   }
 
-  /** Returns the in-progress overlay characters for the current pointer interaction. */
+  /** Compatibility accessor for the independent in-progress preview layer. */
   public getActivePreviewCharacters(): Map<string, string> {
-    if (this.pendingPaint) return this.getPaintPreviewCharacters();
-    if (this.pendingLine) return this.getLinePreviewCharacters();
-    if (this.pendingBox) return this.getBoxPreviewCharacters();
+    return this.buildActivePreviewCharacters();
+  }
+
+  /** Builds the in-progress overlay characters for the current pointer interaction. */
+  private buildActivePreviewCharacters(): Map<string, string> {
+    if (this.interaction.pendingPaint) return this.getPaintPreviewCharacters();
+    if (this.interaction.pendingLine) return this.getLinePreviewCharacters();
+    if (this.interaction.pendingBox) return this.getBoxPreviewCharacters();
     return new Map<string, string>();
   }
 
-  /** Returns the rendered cell keys currently covered by the selection overlay. */
+  /** Compatibility accessor for the independent selection layer. */
   public getSelectedCellKeys(): Set<string> {
+    return this.buildSelectedCellKeys();
+  }
+
+  /** Builds the rendered cell keys currently covered by the selection overlay. */
+  private buildSelectedCellKeys(): Set<string> {
     const keys = new Set<string>();
 
     for (const selected of this.getSelectedObjects()) {
@@ -731,12 +735,20 @@ export class DrawState {
     return keys;
   }
 
-  /** Returns the dotted marquee preview for an in-progress selection drag. */
+  /** Compatibility accessor for the independent marquee layer. */
   public getSelectionMarqueeCharacters(): Map<string, string> {
-    const marquee = new Map<string, string>();
-    if (!this.pendingSelection) return marquee;
+    return this.buildSelectionMarqueeCharacters();
+  }
 
-    const rect = normalizeRect(this.pendingSelection.start, this.pendingSelection.end);
+  /** Builds the dotted marquee preview for an in-progress selection drag. */
+  private buildSelectionMarqueeCharacters(): Map<string, string> {
+    const marquee = new Map<string, string>();
+    if (!this.interaction.pendingSelection) return marquee;
+
+    const rect = normalizeRect(
+      this.interaction.pendingSelection.start,
+      this.interaction.pendingSelection.end,
+    );
     for (const point of getRectPerimeterPoints(rect)) {
       if (!this.isInsideCanvas(point.x, point.y)) continue;
       marquee.set(`${point.x},${point.y}`, "·");
@@ -745,8 +757,13 @@ export class DrawState {
     return marquee;
   }
 
-  /** Returns resize or endpoint handles for the current single-object selection. */
+  /** Compatibility accessor for the independent resize-handle layer. */
   public getSelectionHandleCharacters(): Map<string, string> {
+    return this.buildSelectionHandleCharacters();
+  }
+
+  /** Builds resize or endpoint handles for the current single-object selection. */
+  private buildSelectionHandleCharacters(): Map<string, string> {
     const handles = new Map<string, string>();
 
     if (this.selectedObjectIds.length !== 1) return handles;
@@ -783,25 +800,16 @@ export class DrawState {
     return hadSelection;
   }
 
-  /** Returns the final rendered character at a canvas cell. */
+  /** Compatibility accessor for committed document content at one canvas cell. */
   public getCompositeCell(x: number, y: number): string {
     this.ensureScene();
-    const ink = this.renderCanvas[y]![x] ?? " ";
-    if (ink !== " ") return ink;
-    return this.getConnectionGlyph(x, y);
+    return getDrawSceneCell(this.getSceneProjection(), x, y).character;
   }
 
-  /** Returns the final rendered color at a canvas cell. */
+  /** Compatibility accessor for committed document color at one canvas cell. */
   public getCompositeColor(x: number, y: number): InkColor | null {
     this.ensureScene();
-    const ink = this.renderCanvas[y]![x] ?? " ";
-    if (ink !== " ") {
-      return this.renderCanvasColors[y]![x] ?? null;
-    }
-
-    return this.getConnectionGlyph(x, y) === " "
-      ? null
-      : (this.renderConnectionColors[y]![x] ?? null);
+    return getDrawSceneCell(this.getSceneProjection(), x, y).inkColor;
   }
 
   /** Moves the keyboard cursor while keeping it inside the canvas bounds. */
@@ -965,12 +973,7 @@ export class DrawState {
   public setMode(next: DrawMode): void {
     if (this.mode === next) return;
     this.mode = next;
-    this.pendingSelection = null;
-    this.pendingLine = null;
-    this.pendingBox = null;
-    this.pendingPaint = null;
-    this.dragState = null;
-    this.eraseState = null;
+    this.resetTransientInteraction();
     if (next !== "text") {
       this.activeTextObjectId = null;
     }
@@ -1006,8 +1009,8 @@ export class DrawState {
   public toggleElbowOrientation(): void {
     this.elbowOrientation =
       this.elbowOrientation === "horizontal-first" ? "vertical-first" : "horizontal-first";
-    if (this.mode === "elbow" && this.pendingLine) {
-      this.pendingLine.orientation = this.elbowOrientation;
+    if (this.mode === "elbow" && this.interaction.pendingLine) {
+      this.interaction.pendingLine.orientation = this.elbowOrientation;
     }
     this.setStatus(
       `Elbow route set to ${this.describeElbowOrientation(this.elbowOrientation)}${
@@ -1181,12 +1184,7 @@ export class DrawState {
     this.setObjects([]);
     this.setSelectedObjects([]);
     this.activeTextObjectId = null;
-    this.pendingSelection = null;
-    this.pendingLine = null;
-    this.pendingBox = null;
-    this.pendingPaint = null;
-    this.dragState = null;
-    this.eraseState = null;
+    this.resetTransientInteraction();
     this.markSceneDirty();
     this.setStatus("Canvas cleared.");
   }
@@ -1228,13 +1226,13 @@ export class DrawState {
   /** Exports the rendered canvas with surrounding empty rows trimmed away. */
   public exportArt(): string {
     this.ensureScene();
+    const scene = this.getSceneProjection();
     const lines: string[] = [];
 
     for (let y = 0; y < this.canvasHeight; y += 1) {
       let row = "";
       for (let x = 0; x < this.canvasWidth; x += 1) {
-        const ink = this.renderCanvas[y]![x] ?? " ";
-        row += ink !== " " ? ink : this.getConnectionGlyph(x, y);
+        row += getDrawSceneCell(scene, x, y).character;
       }
       lines.push(row.replace(/\s+$/g, ""));
     }
@@ -1302,56 +1300,16 @@ export class DrawState {
   /** Projects the current scene and interaction overlays into renderer-neutral canvas cells. */
   public getCanvasProjection(): DrawCanvasProjection {
     this.ensureScene();
-    const preview = this.getActivePreviewCharacters();
-    const marqueeChars = this.getSelectionMarqueeCharacters();
-    const selectedCells = this.getSelectedCellKeys();
-    const handleChars = this.getSelectionHandleCharacters();
-    const cells = new Map<string, DrawCanvasCellProjection>();
-
-    for (let y = 0; y < this.canvasHeight; y += 1) {
-      for (let x = 0; x < this.canvasWidth; x += 1) {
-        const character = this.getCompositeCell(x, y);
-        if (character === " ") continue;
-        const key = `${x},${y}`;
-        cells.set(key, {
-          character,
-          inkColor: this.getCompositeColor(x, y),
-          kind: "content",
-        });
-      }
-    }
-
-    for (const [key, character] of preview) {
-      cells.set(key, { character, inkColor: this.inkColor, kind: "preview" });
-    }
-    for (const key of selectedCells) {
-      const point = pointFromKey(key);
-      const cell = cells.get(key) ?? {
-        character: this.getCompositeCell(point.x, point.y),
-        inkColor: this.getCompositeColor(point.x, point.y),
-        kind: "content" as const,
-      };
-      cells.set(key, { ...cell, kind: "selection" });
-    }
-    for (const [key, character] of marqueeChars) {
-      cells.set(key, { character, inkColor: null, kind: "marquee" });
-    }
-    for (const [key, character] of handleChars) {
-      cells.set(key, { character, inkColor: null, kind: "handle" });
-    }
-
-    const cursorKey = `${this.cursorX},${this.cursorY}`;
-    const cursorCell = cells.get(cursorKey);
-    cells.set(cursorKey, {
-      character: cursorCell?.character ?? " ",
-      inkColor: cursorCell?.inkColor ?? null,
-      kind: "cursor",
-    });
-
-    return {
+    return projectDrawCanvas({
+      scene: this.getSceneProjection(),
       viewport: this.getViewportSnapshot(),
-      cells,
-    };
+      preview: this.buildActivePreviewCharacters(),
+      previewInkColor: this.inkColor,
+      selectedCells: this.buildSelectedCellKeys(),
+      marquee: this.buildSelectionMarqueeCharacters(),
+      handles: this.buildSelectionHandleCharacters(),
+      cursor: { x: this.cursorX, y: this.cursorY },
+    });
   }
 
   /** Replaces the current editable scene from a validated termDRAW document. */
@@ -1364,12 +1322,7 @@ export class DrawState {
     this.selectedObjectId = null;
     this.activeTextObjectId = null;
     this.textEntryArmed = false;
-    this.pendingSelection = null;
-    this.pendingLine = null;
-    this.pendingBox = null;
-    this.pendingPaint = null;
-    this.dragState = null;
-    this.eraseState = null;
+    this.resetTransientInteraction();
     this.undoStack = [];
     this.redoStack = [];
     this.cursorX = 0;
@@ -1411,7 +1364,7 @@ export class DrawState {
     if (handleHit) {
       this.setSelectedObjects([handleHit.object.id], handleHit.object.id);
       if (handleHit.kind === "box-corner") {
-        this.dragState = {
+        this.interaction.dragState = {
           kind: "resize-box",
           objectId: handleHit.object.id,
           startMouse: { x, y },
@@ -1424,7 +1377,7 @@ export class DrawState {
         return true;
       }
 
-      this.dragState = {
+      this.interaction.dragState = {
         kind: "line-endpoint",
         objectId: handleHit.object.id,
         startMouse: { x, y },
@@ -1466,7 +1419,7 @@ export class DrawState {
 
     this.setSelectedObjects(selectionIds, object.id);
     this.activeTextObjectId = null;
-    this.dragState = {
+    this.interaction.dragState = {
       kind: "move",
       objectId: object.id,
       startMouse: { x, y },
@@ -1493,13 +1446,9 @@ export class DrawState {
 
   /** Starts a right-drag erase session that only removes each object once. */
   private beginEraseSession(): void {
-    this.pendingSelection = null;
-    this.pendingLine = null;
-    this.pendingBox = null;
-    this.pendingPaint = null;
-    this.dragState = null;
+    this.resetTransientInteraction();
     this.activeTextObjectId = null;
-    this.eraseState = {
+    this.interaction.eraseState = {
       erasedIds: new Set<string>(),
       pushedUndo: false,
     };
@@ -1507,44 +1456,50 @@ export class DrawState {
 
   /** Updates the active transient pointer interaction to the latest pointer location. */
   private syncPointerInteraction(point: Point, constrainLineAxis = false): void {
-    if (this.dragState) {
+    if (this.interaction.dragState) {
       this.updateDraggedObject(point, constrainLineAxis);
       return;
     }
 
-    if (this.pendingSelection) {
-      this.pendingSelection.end = point;
+    if (this.interaction.pendingSelection) {
+      this.interaction.pendingSelection.end = point;
       return;
     }
 
-    if (this.pendingBox) {
-      this.pendingBox.end = point;
+    if (this.interaction.pendingBox) {
+      this.interaction.pendingBox.end = point;
       return;
     }
 
-    if (this.pendingLine) {
+    if (this.interaction.pendingLine) {
       const isElbow = this.mode === "elbow";
-      this.pendingLine.end =
-        constrainLineAxis && !isElbow ? constrainLinePoint(this.pendingLine.start, point) : point;
-      this.pendingLine.orientation = this.getElbowOrientationFromModifier(constrainLineAxis);
+      this.interaction.pendingLine.end =
+        constrainLineAxis && !isElbow
+          ? constrainLinePoint(this.interaction.pendingLine.start, point)
+          : point;
+      this.interaction.pendingLine.orientation =
+        this.getElbowOrientationFromModifier(constrainLineAxis);
       return;
     }
 
-    if (this.pendingPaint) {
-      this.pendingPaint.points = appendPaintSegment(
-        this.pendingPaint.points,
-        this.pendingPaint.lastPoint,
+    if (this.interaction.pendingPaint) {
+      this.interaction.pendingPaint.points = appendPaintSegment(
+        this.interaction.pendingPaint.points,
+        this.interaction.pendingPaint.lastPoint,
         point,
       );
-      this.pendingPaint.lastPoint = point;
+      this.interaction.pendingPaint.lastPoint = point;
     }
   }
 
   /** Commits or cancels the current transient pointer interaction. */
   private finishPointerInteraction(point: Point, insideCanvas: boolean): void {
-    if (this.pendingSelection) {
-      const rect = normalizeRect(this.pendingSelection.start, this.pendingSelection.end);
-      this.pendingSelection = null;
+    if (this.interaction.pendingSelection) {
+      const rect = normalizeRect(
+        this.interaction.pendingSelection.start,
+        this.interaction.pendingSelection.end,
+      );
+      this.interaction.pendingSelection = null;
 
       if (rect.left === rect.right && rect.top === rect.bottom) {
         this.setSelectedObjects([]);
@@ -1568,9 +1523,12 @@ export class DrawState {
       return;
     }
 
-    if (this.pendingBox) {
-      const rect = normalizeRect(this.pendingBox.start, this.pendingBox.end);
-      this.pendingBox = null;
+    if (this.interaction.pendingBox) {
+      const rect = normalizeRect(
+        this.interaction.pendingBox.start,
+        this.interaction.pendingBox.end,
+      );
+      this.interaction.pendingBox = null;
       if (rect.left === rect.right && rect.top === rect.bottom) {
         this.setStatus("Ignored zero-size box.");
         return;
@@ -1595,12 +1553,12 @@ export class DrawState {
       return;
     }
 
-    if (this.pendingLine) {
-      const start = this.pendingLine.start;
-      const end = this.pendingLine.end;
-      const orientation = this.pendingLine.orientation;
+    if (this.interaction.pendingLine) {
+      const start = this.interaction.pendingLine.start;
+      const end = this.interaction.pendingLine.end;
+      const orientation = this.interaction.pendingLine.orientation;
       const isElbow = this.mode === "elbow";
-      this.pendingLine = null;
+      this.interaction.pendingLine = null;
 
       if (start.x === end.x && start.y === end.y) {
         this.setStatus(`${isElbow ? "Elbow" : "Line"} cancelled at ${start.x + 1},${start.y + 1}.`);
@@ -1640,9 +1598,9 @@ export class DrawState {
       return;
     }
 
-    if (this.pendingPaint) {
-      const points = this.pendingPaint.points.map((pointEntry) => ({ ...pointEntry }));
-      this.pendingPaint = null;
+    if (this.interaction.pendingPaint) {
+      const points = this.interaction.pendingPaint.points.map((pointEntry) => ({ ...pointEntry }));
+      this.interaction.pendingPaint = null;
 
       this.pushUndo();
       const object: PaintObject = {
@@ -1660,9 +1618,9 @@ export class DrawState {
       return;
     }
 
-    if (this.dragState) {
-      const dragState = this.dragState;
-      this.dragState = null;
+    if (this.interaction.dragState) {
+      const dragState = this.interaction.dragState;
+      this.interaction.dragState = null;
       const object = this.getObjectById(dragState.objectId);
 
       if (!dragState.pushedUndo) {
@@ -1703,8 +1661,8 @@ export class DrawState {
       return;
     }
 
-    if (this.eraseState) {
-      this.eraseState = null;
+    if (this.interaction.eraseState) {
+      this.interaction.eraseState = null;
       if (!insideCanvas) {
         this.setStatus(`Cursor ${point.x + 1},${point.y + 1}.`);
       }
@@ -1713,7 +1671,7 @@ export class DrawState {
 
   /** Applies the latest drag position to the active move, resize, or endpoint edit. */
   private updateDraggedObject(point: Point, constrainLineAxis = false): void {
-    const dragState = this.dragState;
+    const dragState = this.interaction.dragState;
     if (!dragState) return;
 
     let nextObjects: DrawObject[];
@@ -1779,31 +1737,39 @@ export class DrawState {
 
   /** Keeps stored drag snapshots aligned with any z-index changes made during dragging. */
   private syncDragStateZ(objects: DrawObject[]): void {
-    if (!this.dragState) return;
+    if (!this.interaction.dragState) return;
 
     const zById = new Map(objects.map((object) => [object.id, object.z]));
 
-    switch (this.dragState.kind) {
+    switch (this.interaction.dragState.kind) {
       case "move":
-        this.dragState.originalObjects = this.dragState.originalObjects.map((object) => ({
-          ...object,
-          z: zById.get(object.id) ?? object.z,
-        }));
+        this.interaction.dragState.originalObjects = this.interaction.dragState.originalObjects.map(
+          (object) => ({
+            ...object,
+            z: zById.get(object.id) ?? object.z,
+          }),
+        );
         break;
       case "resize-box":
-        this.dragState.originalObject = {
-          ...this.dragState.originalObject,
-          z: zById.get(this.dragState.originalObject.id) ?? this.dragState.originalObject.z,
+        this.interaction.dragState.originalObject = {
+          ...this.interaction.dragState.originalObject,
+          z:
+            zById.get(this.interaction.dragState.originalObject.id) ??
+            this.interaction.dragState.originalObject.z,
         };
-        this.dragState.originalObjects = this.dragState.originalObjects.map((object) => ({
-          ...object,
-          z: zById.get(object.id) ?? object.z,
-        }));
+        this.interaction.dragState.originalObjects = this.interaction.dragState.originalObjects.map(
+          (object) => ({
+            ...object,
+            z: zById.get(object.id) ?? object.z,
+          }),
+        );
         break;
       case "line-endpoint":
-        this.dragState.originalObject = {
-          ...this.dragState.originalObject,
-          z: zById.get(this.dragState.originalObject.id) ?? this.dragState.originalObject.z,
+        this.interaction.dragState.originalObject = {
+          ...this.interaction.dragState.originalObject,
+          z:
+            zById.get(this.interaction.dragState.originalObject.id) ??
+            this.interaction.dragState.originalObject.z,
         };
         break;
     }
@@ -1812,15 +1778,15 @@ export class DrawState {
   /** Erases the topmost object at a cell during an active erase session. */
   private eraseObjectAt(x: number, y: number): void {
     const hit = this.findTopmostObjectAt(x, y);
-    if (!hit || !this.eraseState) return;
-    if (this.eraseState.erasedIds.has(hit.id)) return;
+    if (!hit || !this.interaction.eraseState) return;
+    if (this.interaction.eraseState.erasedIds.has(hit.id)) return;
 
-    if (!this.eraseState.pushedUndo) {
+    if (!this.interaction.eraseState.pushedUndo) {
       this.pushUndo();
-      this.eraseState.pushedUndo = true;
+      this.interaction.eraseState.pushedUndo = true;
     }
 
-    this.eraseState.erasedIds.add(hit.id);
+    this.interaction.eraseState.erasedIds.add(hit.id);
     this.removeObjectById(hit.id);
     if (this.isObjectSelected(hit.id)) {
       this.setSelectedObjects(this.selectedObjectIds.filter((id) => id !== hit.id));
@@ -1887,178 +1853,49 @@ export class DrawState {
     this.textBorderMode = snapshot.textBorderMode;
     this.textBorderModeIndex = snapshot.textBorderModeIndex;
     this.textEntryArmed = this.activeTextObjectId !== null;
-    this.pendingSelection = null;
-    this.pendingLine = null;
-    this.pendingBox = null;
-    this.pendingPaint = null;
-    this.dragState = null;
-    this.eraseState = null;
+    this.resetTransientInteraction();
     this.markSceneDirty();
   }
 
   /** Rebuilds cached render buffers when scene content has changed. */
   private ensureScene(): void {
     if (!this.sceneDirty) return;
-
-    this.renderCanvas = createCanvas(this.canvasWidth, this.canvasHeight);
-    this.renderCanvasColors = createColorGrid(this.canvasWidth, this.canvasHeight);
-    this.renderConnections = createConnectionGrid(this.canvasWidth, this.canvasHeight);
-    this.renderConnectionColors = createColorGrid(this.canvasWidth, this.canvasHeight);
-
-    const indexedObjects = this.objects.map((object, index) => ({ object, index }));
-    indexedObjects.sort((a, b) => a.object.z - b.object.z || a.index - b.index);
-
-    for (const { object } of indexedObjects) {
-      switch (object.type) {
-        case "box": {
-          const style = this.resolveBoxConnectionStyle(object, object.style, object.id);
-          if (this.isDashedBoxStyle(style)) {
-            const { horizontal, vertical, topLeft, topRight, bottomLeft, bottomRight } =
-              getBoxBorderGlyphs(style);
-            this.paintRenderCell(object.left, object.top, topLeft, object.color);
-            this.paintRenderCell(object.right, object.top, topRight, object.color);
-            this.paintRenderCell(object.left, object.bottom, bottomLeft, object.color);
-            this.paintRenderCell(object.right, object.bottom, bottomRight, object.color);
-            for (let x = object.left + 1; x < object.right; x += 1) {
-              this.paintRenderCell(x, object.top, horizontal, object.color);
-              this.paintRenderCell(x, object.bottom, horizontal, object.color);
-            }
-            for (let y = object.top + 1; y < object.bottom; y += 1) {
-              this.paintRenderCell(object.left, y, vertical, object.color);
-              this.paintRenderCell(object.right, y, vertical, object.color);
-            }
-            break;
-          }
-          applyBoxPerimeter(object, (x, y, direction) => {
-            adjustConnection(
-              this.renderConnections,
-              this.canvasWidth,
-              this.canvasHeight,
-              x,
-              y,
-              direction,
-              style,
-              1,
-            );
-            paintConnectionColor(
-              this.renderConnectionColors,
-              this.canvasWidth,
-              this.canvasHeight,
-              x,
-              y,
-              direction,
-              object.color,
-            );
-          });
-          break;
-        }
-        case "line": {
-          const rendered = getLineRenderCharacters(
-            { x: object.x1, y: object.y1 },
-            { x: object.x2, y: object.y2 },
-            object.style,
-          );
-          for (const [key, char] of rendered) {
-            const { x, y } = pointFromKey(key);
-            this.paintRenderCell(x, y, char, object.color);
-          }
-          break;
-        }
-        case "elbow": {
-          const rendered = getElbowRenderCharacters(
-            { x: object.x1, y: object.y1 },
-            { x: object.x2, y: object.y2 },
-            object.style,
-            object.orientation,
-          );
-          for (const [key, char] of rendered) {
-            const { x, y } = pointFromKey(key);
-            this.paintRenderCell(x, y, char, object.color);
-          }
-          break;
-        }
-        case "paint": {
-          for (const point of object.points) {
-            this.paintRenderCell(point.x, point.y, object.brush, object.color);
-          }
-          break;
-        }
-        case "text": {
-          const contentOrigin = getTextContentOrigin(object);
-          if (object.border !== "none") {
-            const contentWidth = Math.max(1, visibleCellCount(object.content));
-            const left = object.x;
-            const top = object.y;
-            const right = object.x + contentWidth + 1;
-            const bottom = object.y + 2;
-            if (object.border === "underline") {
-              for (let x = contentOrigin.x; x < contentOrigin.x + contentWidth; x += 1) {
-                this.paintRenderCell(x, bottom, "─", object.color);
-              }
-            } else {
-              const horizontal = object.border === "double" ? "═" : "─";
-              const vertical = object.border === "double" ? "║" : "│";
-              const topLeft = object.border === "double" ? "╔" : "┌";
-              const topRight = object.border === "double" ? "╗" : "┐";
-              const bottomLeft = object.border === "double" ? "╚" : "└";
-              const bottomRight = object.border === "double" ? "╝" : "┘";
-
-              this.paintRenderCell(left, top, topLeft, object.color);
-              this.paintRenderCell(right, top, topRight, object.color);
-              this.paintRenderCell(left, bottom, bottomLeft, object.color);
-              this.paintRenderCell(right, bottom, bottomRight, object.color);
-              for (let x = left + 1; x < right; x += 1) {
-                this.paintRenderCell(x, top, horizontal, object.color);
-                this.paintRenderCell(x, bottom, horizontal, object.color);
-              }
-              this.paintRenderCell(left, top + 1, vertical, object.color);
-              this.paintRenderCell(right, top + 1, vertical, object.color);
-            }
-          }
-
-          for (const [index, segment] of splitGraphemes(object.content).entries()) {
-            this.paintRenderCell(contentOrigin.x + index, contentOrigin.y, segment, object.color);
-          }
-          break;
-        }
-      }
-    }
-
+    const scene = projectDrawScene(this.objects, this.canvasWidth, this.canvasHeight);
+    this.renderCanvas = scene.canvas;
+    this.renderCanvasColors = scene.colors;
+    this.renderConnections = scene.connections;
+    this.renderConnectionColors = scene.connectionColors;
     this.sceneDirty = false;
   }
 
-  /** Writes a normalized character and color into the cached render canvas. */
-  private paintRenderCell(x: number, y: number, char: string, color: InkColor): void {
-    if (!this.isInsideCanvas(x, y)) return;
-    this.renderCanvas[y]![x] = normalizeCellCharacter(char);
-    this.renderCanvasColors[y]![x] = color;
-  }
-
-  /** Returns the composed box-drawing glyph for the connection grid at a cell. */
-  private getConnectionGlyph(x: number, y: number): string {
-    return getConnectionGlyphForGrid(
-      this.renderConnections,
-      x,
-      y,
-      this.canvasWidth,
-      this.canvasHeight,
-    );
+  /** Returns the current cached document scene as an explicit projection value. */
+  private getSceneProjection(): DrawSceneProjection {
+    return {
+      canvas: this.renderCanvas,
+      colors: this.renderCanvasColors,
+      connections: this.renderConnections,
+      connectionColors: this.renderConnectionColors,
+    };
   }
 
   /** Builds the preview overlay for an in-progress line or elbow drag. */
   private getLinePreviewCharacters(): Map<string, string> {
     const preview = new Map<string, string>();
-    if (!this.pendingLine) return preview;
+    if (!this.interaction.pendingLine) return preview;
 
     const rendered =
       this.mode === "elbow"
         ? getElbowRenderCharacters(
-            this.pendingLine.start,
-            this.pendingLine.end,
+            this.interaction.pendingLine.start,
+            this.interaction.pendingLine.end,
             this.elbowLineStyle,
-            this.pendingLine.orientation,
+            this.interaction.pendingLine.orientation,
           )
-        : getLineRenderCharacters(this.pendingLine.start, this.pendingLine.end, this.lineStyle);
+        : getLineRenderCharacters(
+            this.interaction.pendingLine.start,
+            this.interaction.pendingLine.end,
+            this.lineStyle,
+          );
 
     for (const [key, char] of rendered) {
       const { x, y } = pointFromKey(key);
@@ -2072,9 +1909,9 @@ export class DrawState {
   /** Builds the preview overlay for an in-progress paint stroke. */
   private getPaintPreviewCharacters(): Map<string, string> {
     const preview = new Map<string, string>();
-    if (!this.pendingPaint) return preview;
+    if (!this.interaction.pendingPaint) return preview;
 
-    for (const point of this.pendingPaint.points) {
+    for (const point of this.interaction.pendingPaint.points) {
       if (!this.isInsideCanvas(point.x, point.y)) continue;
       preview.set(`${point.x},${point.y}`, this.brush);
     }
@@ -2085,10 +1922,10 @@ export class DrawState {
   /** Builds the preview overlay for an in-progress box drag. */
   private getBoxPreviewCharacters(): Map<string, string> {
     const preview = new Map<string, string>();
-    if (!this.pendingBox) return preview;
+    if (!this.interaction.pendingBox) return preview;
 
-    const rect = normalizeRect(this.pendingBox.start, this.pendingBox.end);
-    const style = this.resolveBoxConnectionStyle(rect, this.boxStyle);
+    const rect = normalizeRect(this.interaction.pendingBox.start, this.interaction.pendingBox.end);
+    const style = resolveBoxConnectionStyle(this.objects, rect, this.boxStyle);
     const { horizontal, vertical, topLeft, topRight, bottomLeft, bottomRight } =
       getBoxBorderGlyphs(style);
 
@@ -2112,40 +1949,6 @@ export class DrawState {
     setPreview(rect.right, rect.bottom, bottomRight);
 
     return preview;
-  }
-
-  /** Normalizes auto box styling into a concrete connection style. */
-  private resolveBoxConnectionStyle(
-    rect: Rect,
-    style: BoxStyle,
-    ignoreId?: string,
-  ): ConnectionStyle {
-    if (style === "auto") {
-      return this.getAutoBoxConnectionStyle(rect, ignoreId);
-    }
-
-    return style;
-  }
-
-  /** Returns whether a concrete box style should render as a manual dashed perimeter. */
-  private isDashedBoxStyle(style: ConnectionStyle): boolean {
-    return style === "dashed";
-  }
-
-  /** Alternates auto box weight based on nesting depth inside other boxes. */
-  private getAutoBoxConnectionStyle(rect: Rect, ignoreId?: string): ConnectionStyle {
-    const depth = this.objects.filter((object) => {
-      if (object.type !== "box") return false;
-      if (object.id === ignoreId) return false;
-      return (
-        rect.left > object.left &&
-        rect.right < object.right &&
-        rect.top > object.top &&
-        rect.bottom < object.bottom
-      );
-    }).length;
-
-    return depth % 2 === 0 ? "heavy" : "light";
   }
 
   /** Looks up an object by id. */
@@ -2906,6 +2709,11 @@ export class DrawState {
   /** Marks cached render buffers as stale. */
   private markSceneDirty(): void {
     this.sceneDirty = true;
+  }
+
+  /** Clears all pointer-session state without affecting document or editor state. */
+  private resetTransientInteraction(): void {
+    this.interaction = createTransientInteractionState();
   }
 
   /** Updates the user-facing status message. */
