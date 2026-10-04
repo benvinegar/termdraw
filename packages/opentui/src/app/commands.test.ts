@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
 import { MouseButton, type KeyEvent } from "@opentui/core";
 import { DrawState } from "../draw-state";
+import { dispatchDrawIntent } from "../draw-state/intent";
+import type { DrawIntent } from "../draw-state/intent";
 import {
   TERM_DRAW_COMMAND_CATALOG,
   dispatchTermDrawCommand,
@@ -10,9 +12,12 @@ import {
   type TermDrawCommandEvent,
 } from "./commands";
 
-function context(overrides: Partial<TermDrawCommandContext> = {}): TermDrawCommandContext {
+function context(
+  overrides: Partial<TermDrawCommandContext> = {},
+  state = new DrawState(40, 20),
+): TermDrawCommandContext {
   return {
-    state: new DrawState(40, 20),
+    dispatchDrawIntent: (intent) => dispatchDrawIntent(state, intent),
     cancelOnCtrlCEnabled: false,
     onSave: null,
     onCopy: null,
@@ -31,12 +36,50 @@ test("command catalog has unique namespaced IDs", () => {
 
 test("commands execute by ID and report their source", () => {
   const events: TermDrawCommandEvent[] = [];
-  const commandContext = context({ onCommand: (event) => events.push(event) });
+  const state = new DrawState(40, 20);
+  const commandContext = context({ onCommand: (event) => events.push(event) }, state);
 
   expect(executeTermDrawCommand("termdraw.tool.box", commandContext)).toBe(true);
 
-  expect(commandContext.state.currentMode).toBe("box");
+  expect(state.currentMode).toBe("box");
   expect(events).toEqual([{ id: "termdraw.tool.box", source: "programmatic" }]);
+});
+
+test("document commands lower to explicit draw intents", () => {
+  const intents: DrawIntent[] = [];
+  let renders = 0;
+  const commandContext = context({
+    dispatchDrawIntent: (intent) => {
+      intents.push(intent);
+      return true;
+    },
+    requestRender: () => renders++,
+  });
+
+  expect(executeTermDrawCommand("termdraw.cursor.left", commandContext)).toBe(true);
+  expect(executeTermDrawCommand("termdraw.style.next", commandContext)).toBe(true);
+  expect(executeTermDrawCommand("termdraw.edit.delete", commandContext)).toBe(true);
+
+  expect(intents).toEqual([
+    { type: "move", dx: -1, dy: 0 },
+    { type: "cycle-style", direction: 1 },
+    { type: "delete-or-erase" },
+  ]);
+  expect(renders).toBe(3);
+});
+
+test("declined draw intents do not render or emit command events", () => {
+  let renders = 0;
+  const events: TermDrawCommandEvent[] = [];
+  const commandContext = context({
+    dispatchDrawIntent: () => false,
+    requestRender: () => renders++,
+    onCommand: (event) => events.push(event),
+  });
+
+  expect(executeTermDrawCommand("termdraw.style.next", commandContext)).toBe(false);
+  expect(renders).toBe(0);
+  expect(events).toEqual([]);
 });
 
 test("keyboard dispatch resolves to the same named command", () => {
@@ -53,10 +96,11 @@ test("keyboard dispatch resolves to the same named command", () => {
       prevented = true;
     },
   } as KeyEvent;
-  const commandContext = context({ onCommand: (event) => events.push(event) });
+  const state = new DrawState(40, 20);
+  const commandContext = context({ onCommand: (event) => events.push(event) }, state);
 
   expect(dispatchTermDrawCommand(key, commandContext)).toBe("termdraw.tool.elbow");
-  expect(commandContext.state.currentMode).toBe("elbow");
+  expect(state.currentMode).toBe("elbow");
   expect(prevented).toBe(true);
   expect(events).toEqual([{ id: "termdraw.tool.elbow", source: "keyboard" }]);
 });
@@ -102,7 +146,7 @@ test("text entry resolves Enter to a contextual named command", () => {
   } as KeyEvent;
 
   expect(
-    dispatchTermDrawCommand(key, context({ state, onCommand: (event) => events.push(event) })),
+    dispatchTermDrawCommand(key, context({ onCommand: (event) => events.push(event) }, state)),
   ).toBe("termdraw.text.finish");
   expect(state.isTextEntryArmed).toBe(false);
   expect(events).toEqual([{ id: "termdraw.text.finish", source: "keyboard" }]);
@@ -128,7 +172,7 @@ test("modified Enter bypasses text completion for the host action", () => {
     preventDefault: () => {},
   } as KeyEvent;
 
-  expect(dispatchTermDrawCommand(key, context({ state, onSave: () => saved++ }))).toBe(
+  expect(dispatchTermDrawCommand(key, context({ onSave: () => saved++ }, state))).toBe(
     "termdraw.art.accept",
   );
   expect(state.isTextEntryArmed).toBe(true);
@@ -147,7 +191,7 @@ test("editing commands retain modifier-tolerant keyboard behavior", () => {
     preventDefault: () => {},
   } as KeyEvent;
 
-  expect(dispatchTermDrawCommand(key, context({ state }))).toBe("termdraw.cursor.up");
+  expect(dispatchTermDrawCommand(key, context({}, state))).toBe("termdraw.cursor.up");
 });
 
 test("disabled host commands are not consumed or observed", () => {

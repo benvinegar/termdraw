@@ -30,6 +30,7 @@ import {
   type TermDrawCommandId,
   type TermDrawCommandSource,
 } from "./app/commands.js";
+import { dispatchDrawIntent } from "./draw-state/intent.js";
 import {
   getColorSwatches,
   getContextualStyleButtons,
@@ -374,7 +375,7 @@ export class TermDrawRenderable extends FrameBufferRenderable {
   /** Builds the current command execution boundary without exposing DrawState to hosts. */
   private getCommandContext(): TermDrawCommandContext {
     return {
-      state: this.state,
+      dispatchDrawIntent: (intent) => dispatchDrawIntent(this.state, intent),
       cancelOnCtrlCEnabled: this.cancelOnCtrlCEnabled,
       onSave: this.onSaveCallback ? () => this.onSaveCallback?.(this.state.exportArt()) : null,
       onCopy: this.onCopyCallback ? () => this.handleCopy() : null,

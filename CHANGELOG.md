@@ -13,6 +13,7 @@ All notable user-visible changes to this project are documented in this file.
 ### Changed
 
 - Verified `@termdraw/pi` compatibility with Pi 0.84 and typechecked the extension against `@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui` 0.84.1.
+- Moved command execution behind internal draw intents and made `DrawCanvasProjection` the primary rendering boundary while retaining low-level `DrawState` compatibility accessors.
 
 ### Fixed
 
